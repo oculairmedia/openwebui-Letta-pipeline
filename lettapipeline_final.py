@@ -2,9 +2,9 @@
 title: Letta Chat Pipeline with OpenWebUI Integration
 author: Cline
 date: 2024-01-17
-version: 3.6
+version: 3.7
 license: MIT
-description: A pipeline that properly sends search results to Letta
+description: A pipeline that sends the complete debug output to Letta
 requirements: pydantic, aiohttp, letta
 """
 
@@ -82,51 +82,24 @@ class Pipeline:
             for key in ['user', 'chat_id', 'title']:
                 payload.pop(key, None)
 
-            # Find the most recent assistant message with sources
-            assistant_message = None
-            for msg in messages:
-                if msg.get('role') == 'assistant' and 'sources' in msg:
-                    assistant_message = msg
-                    break
-
-            # If we have an assistant message with sources, send it as context
-            if assistant_message:
-                # Format the message as a system message with XML tags
-                system_message = (
-                    "Use the following context as your learned knowledge, "
-                    "inside <context></context> XML tags.\n"
-                    "<context>\n"
-                )
-
-                # Add sources information
-                if 'sources' in assistant_message:
-                    for source in assistant_message['sources']:
-                        system_message += "<source>\n"
-                        
-                        # Add source URL
-                        if 'source' in source and 'urls' in source['source']:
-                            system_message += f"<source_id>{source['source']['urls'][0]}</source_id>\n"
-                        
-                        # Add source content
-                        system_message += "<source_context>\n"
-                        if 'document' in source:
-                            docs = source['document']
-                            if isinstance(docs, list):
-                                for doc in docs:
-                                    system_message += f"{doc}\n"
-                            else:
-                                system_message += f"{docs}\n"
-                        system_message += "</source_context>\n"
-                        system_message += "</source>\n"
-
-                system_message += "</context>"
-
-                print(f"[DEBUG] Sending system message to Letta:\n{system_message}")
-                self.client.send_message(
-                    agent_id=self.valves.agent_id,
-                    message=system_message,
-                    role="system"
-                )
+            # Format the debug output exactly as it appears
+            debug_output = f"[DEBUG] outlet - body: {json.dumps(body)}"
+            
+            # Send as system message with XML tags
+            system_message = (
+                "Use the following context as your learned knowledge, "
+                "inside <context></context> XML tags.\n"
+                "<context>\n" +
+                debug_output +
+                "\n</context>"
+            )
+            
+            print(f"[DEBUG] Sending system message to Letta:\n{system_message}")
+            self.client.send_message(
+                agent_id=self.valves.agent_id,
+                message=system_message,
+                role="system"
+            )
 
             # Record time before sending user message
             request_time = time.time()
@@ -188,21 +161,21 @@ if __name__ == "__main__":
         "model": "lettapipeline_final",
         "messages": [
             {
-                "id": "7bc8cadd-f117-4f60-8f93-d575eea53322",
+                "id": "user-msg-id",
                 "role": "user",
-                "content": "the weather in amsterdam"
+                "content": "Explain options trading"
             },
             {
-                "id": "168113cc-4685-4a34-a3ea-4ce0fa62be2e",
+                "id": "assistant-msg-id",
                 "role": "assistant",
-                "content": "Here are the search results",
+                "content": "Here's an explanation...",
                 "sources": [
                     {
                         "source": {
-                            "urls": ["https://www.accuweather.com/amsterdam"],
+                            "urls": ["https://example.com"],
                             "type": "web_search_results"
                         },
-                        "document": ["Current weather information..."]
+                        "document": ["Options trading information..."]
                     }
                 ]
             }
@@ -210,7 +183,7 @@ if __name__ == "__main__":
     }
     
     response = pipeline.pipe(
-        user_message="What's the weather in Amsterdam?",
+        user_message="Explain options trading",
         model_id="default",
         messages=test_body["messages"],
         body=test_body
