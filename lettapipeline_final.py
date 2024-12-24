@@ -1,10 +1,10 @@
 """
-title: Letta Chat Pipeline with OpenWebUI Tool Integration
+title: Letta Chat Pipeline with OpenWebUI Integration
 author: Cline
 date: 2024-01-17
 version: 3.0
 license: MIT
-description: A pipeline that properly integrates OpenWebUI tool results with Letta via system messages
+description: A pipeline that properly integrates OpenWebUI sources and tool results with Letta
 requirements: pydantic, aiohttp, letta
 """
 
@@ -21,7 +21,7 @@ class Pipeline:
         agent_id: str = "agent-a3899314-bbb3-4798-b3f4-241923314b8e"
 
     def __init__(self):
-        self.name = "Letta Chat with OpenWebUI Tools"
+        self.name = "Letta Chat with OpenWebUI Integration"
         self.valves = self.Valves()
         self.client = create_client(base_url=self.valves.base_url)
         print(f"[STARTUP] Starting {self.name}")
@@ -56,6 +56,45 @@ class Pipeline:
             print(f"[ERROR] Error getting response message: {str(e)}")
             return None
 
+    def format_source_content(self, source: Dict[str, Any]) -> str:
+        """Format source content into a clear message"""
+        try:
+            formatted_msg = []
+            
+            # Add source type and name if available
+            if 'source' in source:
+                src_info = source['source']
+                if 'type' in src_info:
+                    formatted_msg.append(f"Source Type: {src_info['type']}")
+                if 'name' in src_info:
+                    formatted_msg.append(f"Query: {src_info['name']}")
+
+            # Add document content if available
+            if 'document' in source:
+                formatted_msg.append("\nInformation:")
+                if isinstance(source['document'], list):
+                    for doc in source['document']:
+                        # Clean up the document text
+                        doc_text = str(doc).replace('\xa0', ' ').strip()
+                        if doc_text:
+                            formatted_msg.append(doc_text)
+                else:
+                    doc_text = str(source['document']).replace('\xa0', ' ').strip()
+                    if doc_text:
+                        formatted_msg.append(doc_text)
+
+            # Add metadata if available
+            if 'metadata' in source:
+                for meta in source['metadata']:
+                    if 'title' in meta and 'description' in meta:
+                        formatted_msg.append(f"\nSource: {meta['title']}")
+                        formatted_msg.append(f"Description: {meta['description']}")
+
+            return "\n".join(formatted_msg)
+        except Exception as e:
+            print(f"[WARNING] Error formatting source content: {str(e)}")
+            return str(source)
+
     def stream_response(self, response: str) -> Generator[str, None, None]:
         """Stream a response one character at a time"""
         for char in response:
@@ -75,40 +114,46 @@ class Pipeline:
             for key in ['user', 'chat_id', 'title']:
                 payload.pop(key, None)
 
-            # Extract context and tool results from messages
+            # Process messages to extract sources and tool results
             context_messages = []
             
             for msg in messages:
-                # Handle system messages (context)
+                # Handle system messages
                 if msg.get('role') == 'system':
                     context = msg.get('content', '')
                     if context:
                         context_messages.append(context)
                 
-                # Handle assistant messages with tool calls and results
-                elif msg.get('role') == 'assistant' and 'tool_calls' in msg:
-                    for tool_call in msg['tool_calls']:
-                        if 'function' in tool_call:
-                            tool_id = tool_call.get('id')
-                            tool_name = tool_call['function'].get('name', 'unknown_tool')
-                            
-                            # Get tool result if available
-                            if tool_id and 'tool_results' in body and tool_id in body['tool_results']:
-                                result = body['tool_results'][tool_id]
-                                # Format tool result as system message
-                                tool_msg = f"Tool '{tool_name}' result:\n"
-                                if isinstance(result, str):
-                                    try:
-                                        # Try to parse JSON
-                                        data = json.loads(result)
-                                        tool_msg += json.dumps(data, indent=2)
-                                    except json.JSONDecodeError:
-                                        tool_msg += result
-                                else:
-                                    tool_msg += json.dumps(result, indent=2)
-                                context_messages.append(tool_msg)
+                # Handle assistant messages with sources
+                elif msg.get('role') == 'assistant':
+                    if 'sources' in msg:
+                        for source in msg['sources']:
+                            source_content = self.format_source_content(source)
+                            if source_content:
+                                context_messages.append(source_content)
+                    
+                    # Handle tool calls if present
+                    if 'tool_calls' in msg:
+                        for tool_call in msg['tool_calls']:
+                            if 'function' in tool_call:
+                                tool_id = tool_call.get('id')
+                                tool_name = tool_call['function'].get('name', 'unknown_tool')
+                                
+                                # Get tool result if available
+                                if tool_id and 'tool_results' in body and tool_id in body['tool_results']:
+                                    result = body['tool_results'][tool_id]
+                                    tool_msg = f"Tool '{tool_name}' result:\n"
+                                    if isinstance(result, str):
+                                        try:
+                                            data = json.loads(result)
+                                            tool_msg += json.dumps(data, indent=2)
+                                        except json.JSONDecodeError:
+                                            tool_msg += result
+                                    else:
+                                        tool_msg += json.dumps(result, indent=2)
+                                    context_messages.append(tool_msg)
 
-            # Send all context messages to Letta
+            # Send all context to Letta
             if context_messages:
                 context_text = "\n\n".join(context_messages)
                 print(f"[DEBUG] Sending context to Letta:\n{context_text}")
@@ -173,29 +218,25 @@ class Pipeline:
 if __name__ == "__main__":
     pipeline = Pipeline()
     
-    # Example with context and tool results
+    # Example with sources and tool results
     test_body = {
-        "tool_results": {
-            "call_abc123": {
-                "status": "OK",
-                "message": "Current temperature is 15°C",
-                "time": "2024-01-17 09:36:12 AM UTC+0000"
-            }
-        },
         "messages": [
             {
-                "role": "system",
-                "content": "Retrieved weather data for Eindhoven"
-            },
-            {
                 "role": "assistant",
-                "tool_calls": [
+                "sources": [
                     {
-                        "id": "call_abc123",
-                        "function": {
-                            "name": "get_weather",
-                            "arguments": "{\"location\": \"Eindhoven\"}"
-                        }
+                        "source": {
+                            "type": "web_search_results",
+                            "name": "current weather in dusseldorf",
+                            "urls": ["https://www.bbc.com/weather/2934246"]
+                        },
+                        "document": ["Currently: 4°C. Light rain. Clear."],
+                        "metadata": [
+                            {
+                                "title": "Dusseldorf - BBC Weather",
+                                "description": "14-day weather forecast for Dusseldorf."
+                            }
+                        ]
                     }
                 ]
             }
@@ -203,7 +244,7 @@ if __name__ == "__main__":
     }
     
     response = pipeline.pipe(
-        user_message="How's the weather?",
+        user_message="What's the weather in Dusseldorf?",
         model_id="default",
         messages=test_body["messages"],
         body=test_body
