@@ -2,9 +2,9 @@
 title: Letta Chat Pipeline with OpenWebUI Integration
 author: Cline
 date: 2024-01-17
-version: 3.7
+version: 3.8
 license: MIT
-description: A pipeline that sends the complete debug output to Letta
+description: A pipeline that matches Letta's expected system message format
 requirements: pydantic, aiohttp, letta
 """
 
@@ -82,24 +82,51 @@ class Pipeline:
             for key in ['user', 'chat_id', 'title']:
                 payload.pop(key, None)
 
-            # Format the debug output exactly as it appears
-            debug_output = f"[DEBUG] outlet - body: {json.dumps(body)}"
-            
-            # Send as system message with XML tags
-            system_message = (
-                "Use the following context as your learned knowledge, "
-                "inside <context></context> XML tags.\n"
-                "<context>\n" +
-                debug_output +
-                "\n</context>"
-            )
-            
-            print(f"[DEBUG] Sending system message to Letta:\n{system_message}")
-            self.client.send_message(
-                agent_id=self.valves.agent_id,
-                message=system_message,
-                role="system"
-            )
+            # Find the most recent assistant message with sources
+            assistant_message = None
+            for msg in messages:
+                if msg.get('role') == 'assistant' and 'sources' in msg:
+                    assistant_message = msg
+                    break
+
+            # If we have an assistant message with sources, send it as context
+            if assistant_message and 'sources' in assistant_message:
+                # Build the system message in Letta's expected format
+                system_message = (
+                    "Use the following context as your learned knowledge, "
+                    "inside <context></context> XML tags. "
+                    "<context>"
+                )
+
+                # Add each source with its content
+                for source in assistant_message['sources']:
+                    if 'source' in source and 'document' in source:
+                        # Get the URL
+                        url = source['source'].get('urls', [''])[0]
+                        
+                        # Get the document content
+                        docs = source['document']
+                        if isinstance(docs, list):
+                            doc_content = '\n'.join(str(doc) for doc in docs)
+                        else:
+                            doc_content = str(docs)
+
+                        # Add source in XML format
+                        system_message += (
+                            f" <source>"
+                            f"<source_id>{url}</source_id>"
+                            f"<source_context>{doc_content}</source_context>"
+                            f"</source>"
+                        )
+
+                system_message += " </context>"
+
+                print(f"[DEBUG] Sending system message to Letta:\n{system_message}")
+                self.client.send_message(
+                    agent_id=self.valves.agent_id,
+                    message=system_message,
+                    role="system"
+                )
 
             # Record time before sending user message
             request_time = time.time()
