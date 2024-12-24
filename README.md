@@ -1,18 +1,27 @@
 # OpenWebUI-Letta Pipeline
 
-This pipeline provides integration between Letta agents and OpenWebUI models. It enables you to use Letta's agent capabilities while leveraging OpenWebUI's model infrastructure and tools.
+This pipeline provides integration between Letta agents and OpenWebUI models, allowing OpenWebUI tools to enhance Letta's responses.
 
 ## Overview
 
-This pipeline connects a Letta agent to an OpenWebUI "model". The integration:
-- Allows Letta agents to use OpenWebUI's model endpoints
-- Supports OpenWebUI tool usage functionality through the enhanced pipeline version
-- Focuses on providing a clean interface between Letta's agent capabilities and OpenWebUI's features
+This pipeline connects OpenWebUI and Letta in a way that:
+- Uses OpenWebUI's existing tools (like web search)
+- Passes tool results to Letta for processing
+- Returns Letta's enhanced responses back to OpenWebUI
+- Maintains a seamless conversation flow
 
 ## Pipeline Versions
 
 1. `lettapipeline.py` - Basic version that connects Letta agents to OpenWebUI models
-2. `lettapipeline_with_tools.py` - Enhanced version that adds support for OpenWebUI tools
+2. `lettapipeline_with_openwebui_tools.py` - Enhanced version that integrates OpenWebUI's tool results with Letta
+
+## How It Works
+
+1. OpenWebUI executes its tools (e.g., web search)
+2. Tool results are passed to the pipeline in the request body
+3. Pipeline sends tool results to Letta as system messages
+4. Letta processes the tool results along with the user's message
+5. Pipeline returns Letta's response to OpenWebUI
 
 ## Repository Structure
 
