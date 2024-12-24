@@ -2,9 +2,9 @@
 title: Letta Chat Pipeline with OpenWebUI Integration
 author: Cline
 date: 2024-01-17
-version: 3.5
+version: 3.6
 license: MIT
-description: A pipeline that sends the complete OpenWebUI tool response to Letta as system message
+description: A pipeline that properly sends search results to Letta
 requirements: pydantic, aiohttp, letta
 """
 
@@ -91,18 +91,40 @@ class Pipeline:
 
             # If we have an assistant message with sources, send it as context
             if assistant_message:
-                # Send the entire outlet body as context
-                context_text = (
+                # Format the message as a system message with XML tags
+                system_message = (
                     "Use the following context as your learned knowledge, "
                     "inside <context></context> XML tags.\n"
-                    "<context>\n" +
-                    "[DEBUG] outlet - body: " + json.dumps(body, indent=2) +
-                    "\n</context>"
+                    "<context>\n"
                 )
-                print(f"[DEBUG] Sending context to Letta:\n{context_text}")
+
+                # Add sources information
+                if 'sources' in assistant_message:
+                    for source in assistant_message['sources']:
+                        system_message += "<source>\n"
+                        
+                        # Add source URL
+                        if 'source' in source and 'urls' in source['source']:
+                            system_message += f"<source_id>{source['source']['urls'][0]}</source_id>\n"
+                        
+                        # Add source content
+                        system_message += "<source_context>\n"
+                        if 'document' in source:
+                            docs = source['document']
+                            if isinstance(docs, list):
+                                for doc in docs:
+                                    system_message += f"{doc}\n"
+                            else:
+                                system_message += f"{docs}\n"
+                        system_message += "</source_context>\n"
+                        system_message += "</source>\n"
+
+                system_message += "</context>"
+
+                print(f"[DEBUG] Sending system message to Letta:\n{system_message}")
                 self.client.send_message(
                     agent_id=self.valves.agent_id,
-                    message=context_text,
+                    message=system_message,
                     role="system"
                 )
 
