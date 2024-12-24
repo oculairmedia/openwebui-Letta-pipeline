@@ -2,7 +2,7 @@
 title: Letta Chat Pipeline with OpenWebUI Integration
 author: Cline
 date: 2024-01-17
-version: 3.0
+version: 3.1
 license: MIT
 description: A pipeline that properly integrates OpenWebUI sources and tool results with Letta
 requirements: pydantic, aiohttp, letta
@@ -56,10 +56,13 @@ class Pipeline:
             print(f"[ERROR] Error getting response message: {str(e)}")
             return None
 
-    def format_source_content(self, source: Dict[str, Any]) -> str:
-        """Format source content into a clear message"""
+    def format_source_content(self, source: Dict[str, Any], query_context: str) -> str:
+        """Format source content into a clear message with query context"""
         try:
             formatted_msg = []
+            
+            # Add query context
+            formatted_msg.append(f"Context for: {query_context}")
             
             # Add source type and name if available
             if 'source' in source:
@@ -67,7 +70,11 @@ class Pipeline:
                 if 'type' in src_info:
                     formatted_msg.append(f"Source Type: {src_info['type']}")
                 if 'name' in src_info:
-                    formatted_msg.append(f"Query: {src_info['name']}")
+                    formatted_msg.append(f"Search Query: {src_info['name']}")
+                if 'urls' in src_info:
+                    formatted_msg.append("Sources:")
+                    for url in src_info['urls']:
+                        formatted_msg.append(f"- {url}")
 
             # Add document content if available
             if 'document' in source:
@@ -87,7 +94,8 @@ class Pipeline:
             if 'metadata' in source:
                 for meta in source['metadata']:
                     if 'title' in meta and 'description' in meta:
-                        formatted_msg.append(f"\nSource: {meta['title']}")
+                        formatted_msg.append(f"\nSource Details:")
+                        formatted_msg.append(f"Title: {meta['title']}")
                         formatted_msg.append(f"Description: {meta['description']}")
 
             return "\n".join(formatted_msg)
@@ -117,18 +125,21 @@ class Pipeline:
             # Process messages to extract sources and tool results
             context_messages = []
             
+            # First, send the user's query as context
+            context_messages.append(f"User Query: {user_message}")
+            
             for msg in messages:
                 # Handle system messages
                 if msg.get('role') == 'system':
                     context = msg.get('content', '')
                     if context:
-                        context_messages.append(context)
+                        context_messages.append(f"System Context: {context}")
                 
                 # Handle assistant messages with sources
                 elif msg.get('role') == 'assistant':
                     if 'sources' in msg:
                         for source in msg['sources']:
-                            source_content = self.format_source_content(source)
+                            source_content = self.format_source_content(source, user_message)
                             if source_content:
                                 context_messages.append(source_content)
                     
@@ -227,14 +238,14 @@ if __name__ == "__main__":
                     {
                         "source": {
                             "type": "web_search_results",
-                            "name": "current weather in dusseldorf",
-                            "urls": ["https://www.bbc.com/weather/2934246"]
+                            "name": "current president united states",
+                            "urls": ["https://www.whitehouse.gov"]
                         },
-                        "document": ["Currently: 4°C. Light rain. Clear."],
+                        "document": ["Joe Biden is the current president"],
                         "metadata": [
                             {
-                                "title": "Dusseldorf - BBC Weather",
-                                "description": "14-day weather forecast for Dusseldorf."
+                                "title": "The White House",
+                                "description": "Official website of the White House"
                             }
                         ]
                     }
@@ -244,7 +255,7 @@ if __name__ == "__main__":
     }
     
     response = pipeline.pipe(
-        user_message="What's the weather in Dusseldorf?",
+        user_message="Who is the current president of the United States?",
         model_id="default",
         messages=test_body["messages"],
         body=test_body
