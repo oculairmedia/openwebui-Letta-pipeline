@@ -2,9 +2,9 @@
 title: Letta Chat Pipeline with OpenWebUI Integration
 author: Cline
 date: 2024-01-17
-version: 3.4
+version: 3.5
 license: MIT
-description: A pipeline that sends the complete OpenWebUI tool response to Letta
+description: A pipeline that sends the complete OpenWebUI tool response to Letta as system message
 requirements: pydantic, aiohttp, letta
 """
 
@@ -84,19 +84,19 @@ class Pipeline:
 
             # Find the most recent assistant message with sources
             assistant_message = None
-            for msg in reversed(messages):
+            for msg in messages:
                 if msg.get('role') == 'assistant' and 'sources' in msg:
                     assistant_message = msg
                     break
 
             # If we have an assistant message with sources, send it as context
             if assistant_message:
-                # Convert the entire message to a string, preserving all information
+                # Send the entire outlet body as context
                 context_text = (
                     "Use the following context as your learned knowledge, "
                     "inside <context></context> XML tags.\n"
                     "<context>\n" +
-                    json.dumps(assistant_message, indent=2) +
+                    "[DEBUG] outlet - body: " + json.dumps(body, indent=2) +
                     "\n</context>"
                 )
                 print(f"[DEBUG] Sending context to Letta:\n{context_text}")
@@ -161,25 +161,26 @@ class Pipeline:
 if __name__ == "__main__":
     pipeline = Pipeline()
     
-    # Example with complete assistant message
+    # Example with complete body
     test_body = {
+        "model": "lettapipeline_final",
         "messages": [
             {
+                "id": "7bc8cadd-f117-4f60-8f93-d575eea53322",
+                "role": "user",
+                "content": "the weather in amsterdam"
+            },
+            {
+                "id": "168113cc-4685-4a34-a3ea-4ce0fa62be2e",
                 "role": "assistant",
                 "content": "Here are the search results",
                 "sources": [
                     {
                         "source": {
-                            "urls": ["https://www.whitehouse.gov"],
+                            "urls": ["https://www.accuweather.com/amsterdam"],
                             "type": "web_search_results"
                         },
-                        "document": ["Joe Biden is the current president"],
-                        "metadata": [
-                            {
-                                "title": "White House Official Website",
-                                "description": "Current administration information"
-                            }
-                        ]
+                        "document": ["Current weather information..."]
                     }
                 ]
             }
@@ -187,7 +188,7 @@ if __name__ == "__main__":
     }
     
     response = pipeline.pipe(
-        user_message="Who is the current president of the United States?",
+        user_message="What's the weather in Amsterdam?",
         model_id="default",
         messages=test_body["messages"],
         body=test_body
