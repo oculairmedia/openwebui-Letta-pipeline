@@ -2,9 +2,9 @@
 title: Letta Chat Pipeline with OpenWebUI Integration
 author: Cline
 date: 2024-01-17
-version: 3.2
+version: 3.3
 license: MIT
-description: A pipeline that properly integrates OpenWebUI information with Letta and returns Letta's responses
+description: A pipeline that properly integrates OpenWebUI information with Letta using XML context format
 requirements: pydantic, aiohttp, letta
 """
 
@@ -30,34 +30,39 @@ class Pipeline:
         print(f"[STARTUP] - agent_id: {self.valves.agent_id}")
 
     def format_source_content(self, source: Dict[str, Any]) -> str:
-        """Format source content into a clear message"""
+        """Format source content into XML context format"""
         try:
-            formatted_msg = []
+            source_elements = []
             
-            # Add document content if available
-            if 'document' in source:
-                if isinstance(source['document'], list):
-                    for doc in source['document']:
-                        # Clean up the document text
-                        doc_text = str(doc).replace('\xa0', ' ').strip()
-                        if doc_text:
-                            formatted_msg.append(doc_text)
-                else:
-                    doc_text = str(source['document']).replace('\xa0', ' ').strip()
-                    if doc_text:
-                        formatted_msg.append(doc_text)
-
-            # Add metadata if available
-            if 'metadata' in source:
-                for meta in source['metadata']:
-                    if 'title' in meta and 'description' in meta:
-                        formatted_msg.append(f"\nSource: {meta['title']}")
-                        formatted_msg.append(f"{meta['description']}")
-
-            return "\n".join(formatted_msg)
+            # Add source information
+            if 'source' in source:
+                src_info = source['source']
+                source_elements.append("<source>")
+                
+                # Add source URL if available
+                if 'urls' in src_info and src_info['urls']:
+                    source_elements.append(f"<source_id>{src_info['urls'][0]}</source_id>")
+                
+                # Add source content
+                if 'document' in source:
+                    source_content = []
+                    if isinstance(source['document'], list):
+                        source_content.extend(str(doc).replace('\xa0', ' ').strip() 
+                                           for doc in source['document'] if doc)
+                    else:
+                        source_content.append(str(source['document']).replace('\xa0', ' ').strip())
+                    
+                    if source_content:
+                        source_elements.append("<source_context>")
+                        source_elements.append("\n".join(source_content))
+                        source_elements.append("</source_context>")
+                
+                source_elements.append("</source>")
+            
+            return "\n".join(source_elements)
         except Exception as e:
             print(f"[WARNING] Error formatting source content: {str(e)}")
-            return str(source)
+            return ""
 
     def get_response_message(self, agent_id: str, after_time) -> Union[str, None]:
         """Get response message after specified time"""
@@ -112,8 +117,8 @@ class Pipeline:
             for key in ['user', 'chat_id', 'title']:
                 payload.pop(key, None)
 
-            # Process messages to extract sources and tool results
-            context_messages = []
+            # Process messages to extract sources
+            source_contents = []
             
             for msg in messages:
                 # Handle assistant messages with sources
@@ -121,11 +126,18 @@ class Pipeline:
                     for source in msg['sources']:
                         source_content = self.format_source_content(source)
                         if source_content:
-                            context_messages.append(source_content)
+                            source_contents.append(source_content)
 
             # Send context to Letta if available
-            if context_messages:
-                context_text = "\n\n".join(context_messages)
+            if source_contents:
+                # Format as XML context
+                context_text = (
+                    "Use the following context as your learned knowledge, "
+                    "inside <context></context> XML tags.\n"
+                    "<context>\n" +
+                    "\n".join(source_contents) +
+                    "\n</context>"
+                )
                 print(f"[DEBUG] Sending context to Letta:\n{context_text}")
                 self.client.send_message(
                     agent_id=self.valves.agent_id,
@@ -195,6 +207,10 @@ if __name__ == "__main__":
                 "role": "assistant",
                 "sources": [
                     {
+                        "source": {
+                            "urls": ["https://www.whitehouse.gov"],
+                            "type": "web_search_results"
+                        },
                         "document": ["Joe Biden is the current president of the United States"],
                         "metadata": [
                             {
