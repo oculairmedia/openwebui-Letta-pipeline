@@ -1,10 +1,10 @@
 """
-title: Letta Chat Pipeline with OpenWebUI Tools
+title: Letta Chat Pipeline with OpenWebUI Tools Integration
 author: Cline
 date: 2024-01-17
 version: 2.0
 license: MIT
-description: A pipeline for processing messages through Letta chat API with OpenWebUI tool support
+description: A pipeline that integrates any OpenWebUI tool results with Letta
 requirements: pydantic, aiohttp, letta
 """
 
@@ -12,79 +12,22 @@ from typing import List, Union, Generator, Iterator, Dict, Any, Optional
 from pydantic import BaseModel, ConfigDict
 import json
 import time
-import asyncio
 from letta import create_client
-
-class ToolCall(BaseModel):
-    id: str
-    type: str = "function"
-    function: Dict[str, Any]
-
-class OpenWebUITool(BaseModel):
-    name: str
-    description: str
-    parameters: Dict[str, Any]
 
 class Pipeline:
     class Valves(BaseModel):
         model_config = ConfigDict(protected_namespaces=())
         base_url: str = "http://192.168.50.90:8283"
         agent_id: str = "agent-a3899314-bbb3-4798-b3f4-241923314b8e"
-        openwebui_tools: List[OpenWebUITool] = []
 
     def __init__(self):
-        self.name = "Letta Chat with Tools"
+        self.name = "Letta Chat with OpenWebUI Tools"
         self.valves = self.Valves()
         self.client = create_client(base_url=self.valves.base_url)
-        self.tool_results: Dict[str, Any] = {}
         print(f"[STARTUP] Starting {self.name}")
         print(f"[STARTUP] Configuration:")
         print(f"[STARTUP] - base_url: {self.valves.base_url}")
         print(f"[STARTUP] - agent_id: {self.valves.agent_id}")
-        print(f"[STARTUP] - tools: {len(self.valves.openwebui_tools)} configured")
-
-    def register_tool(self, tool: OpenWebUITool):
-        """Register a new OpenWebUI tool"""
-        self.valves.openwebui_tools.append(tool)
-        print(f"[INFO] Registered tool: {tool.name}")
-
-    async def execute_tool(self, tool_call: ToolCall) -> Optional[str]:
-        """Execute an OpenWebUI tool and return the result"""
-        try:
-            tool_name = tool_call.function.get("name")
-            tool_args = json.loads(tool_call.function.get("arguments", "{}"))
-            
-            # Find matching tool
-            tool = next((t for t in self.valves.openwebui_tools 
-                        if t.name == tool_name), None)
-            
-            if not tool:
-                return f"Tool '{tool_name}' not found"
-
-            # Store tool call in results
-            self.tool_results[tool_call.id] = {
-                "name": tool_name,
-                "arguments": tool_args,
-                "status": "executing"
-            }
-
-            # Here you would implement the actual tool execution
-            # For now, we'll simulate tool execution
-            await asyncio.sleep(0.5)  # Simulate tool execution time
-            
-            result = f"Executed {tool_name} with args: {tool_args}"
-            self.tool_results[tool_call.id]["status"] = "completed"
-            self.tool_results[tool_call.id]["result"] = result
-            
-            return result
-            
-        except Exception as e:
-            error_msg = f"Error executing tool: {str(e)}"
-            print(f"[ERROR] {error_msg}")
-            if tool_call.id in self.tool_results:
-                self.tool_results[tool_call.id]["status"] = "failed"
-                self.tool_results[tool_call.id]["error"] = error_msg
-            return error_msg
 
     def get_response_message(self, agent_id: str, after_time) -> Union[str, None]:
         """Get response message after specified time"""
@@ -98,27 +41,11 @@ class Pipeline:
                 for msg in reversed(messages):
                     msg_time = msg.created_at.timestamp() if hasattr(msg, 'created_at') else 0
                     
-                    if msg_time > after_time:
-                        if msg.role == "assistant":
-                            # Handle tool calls
-                            if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                                tool_responses = []
-                                for tool_call in msg.tool_calls:
-                                    # Check if it's an OpenWebUI tool
-                                    if any(t.name == tool_call.function.name 
-                                         for t in self.valves.openwebui_tools):
-                                        result = asyncio.run(self.execute_tool(tool_call))
-                                        if result:
-                                            tool_responses.append(result)
-                                
-                                if tool_responses:
-                                    return "\n".join(tool_responses)
-                                    
-                            # Handle regular messages
-                            if hasattr(msg, 'text'):
-                                return msg.text
-                            elif hasattr(msg, 'message'):
-                                return msg.message
+                    if msg_time > after_time and msg.role == "assistant":
+                        if hasattr(msg, 'text'):
+                            return msg.text
+                        elif hasattr(msg, 'message'):
+                            return msg.message
                 
                 attempt += 1
                 if attempt < max_attempts:
@@ -128,6 +55,25 @@ class Pipeline:
         except Exception as e:
             print(f"[ERROR] Error getting response message: {str(e)}")
             return None
+
+    def format_tool_results(self, tool_name: str, result: Any) -> str:
+        """Format a single tool result into a clear message"""
+        try:
+            if isinstance(result, str):
+                try:
+                    # Try to parse as JSON if it's a string
+                    data = json.loads(result)
+                    return f"Tool '{tool_name}' returned:\n{json.dumps(data, indent=2)}\n"
+                except json.JSONDecodeError:
+                    # If not JSON, return as is
+                    return f"Tool '{tool_name}' returned: {result}\n"
+            elif isinstance(result, (dict, list)):
+                return f"Tool '{tool_name}' returned:\n{json.dumps(result, indent=2)}\n"
+            else:
+                return f"Tool '{tool_name}' returned: {str(result)}\n"
+        except Exception as e:
+            print(f"[WARNING] Error formatting tool result: {str(e)}")
+            return f"Tool '{tool_name}' returned a result (format error)\n"
 
     async def inlet(self, body: dict, user: dict) -> dict:
         """Process incoming request before sending to agent"""
@@ -152,10 +98,35 @@ class Pipeline:
             for key in ['user', 'chat_id', 'title']:
                 payload.pop(key, None)
 
-            # Record time before sending message
+            # Extract tool results from the message history
+            tool_results = []
+            for msg in messages:
+                if msg.get('role') == 'assistant' and 'tool_calls' in msg:
+                    for tool_call in msg['tool_calls']:
+                        if 'function' in tool_call:
+                            tool_name = tool_call['function'].get('name', 'unknown_tool')
+                            # Check if we have a result for this tool call
+                            tool_id = tool_call.get('id')
+                            if tool_id and 'tool_results' in body and tool_id in body['tool_results']:
+                                result = body['tool_results'][tool_id]
+                                tool_results.append(self.format_tool_results(tool_name, result))
+
+            # If we have tool results, send them to Letta
+            if tool_results:
+                tool_info = "Here are the results from the tools:\n\n" + "\n".join(tool_results)
+                print(f"[DEBUG] Sending tool results to Letta:\n{tool_info}")
+                
+                # Send tool results as system message
+                self.client.send_message(
+                    agent_id=self.valves.agent_id,
+                    message=tool_info,
+                    role="system"
+                )
+
+            # Record time before sending user message
             request_time = time.time()
             
-            # Send message to agent
+            # Send user message to agent
             response = self.client.send_message(
                 agent_id=self.valves.agent_id,
                 message=user_message,
@@ -199,28 +170,35 @@ class Pipeline:
 if __name__ == "__main__":
     pipeline = Pipeline()
     
-    # Register example tools
-    example_tool = OpenWebUITool(
-        name="search_web",
-        description="Search the web for information",
-        parameters={
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query"
-                }
-            },
-            "required": ["query"]
-        }
-    )
-    pipeline.register_tool(example_tool)
+    # Example with tool results
+    test_body = {
+        "tool_results": {
+            "call_abc123": {
+                "status": "OK",
+                "message": "Weather data retrieved",
+                "time": "2024-01-17 09:36:12 AM UTC+0000"
+            }
+        },
+        "messages": [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_abc123",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": "{\"location\": \"Eindhoven\"}"
+                        }
+                    }
+                ]
+            }
+        ]
+    }
     
-    # Send a test message
     response = pipeline.pipe(
-        user_message="Search the web for 'Python programming'",
+        user_message="How's the weather?",
         model_id="default",
-        messages=[],
-        body={}
+        messages=test_body["messages"],
+        body=test_body
     )
     print(f"Agent response: {response}")
