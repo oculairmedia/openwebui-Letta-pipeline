@@ -2,9 +2,9 @@
 title: Letta Chat Pipeline with OpenWebUI Integration
 author: Cline
 date: 2024-01-17
-version: 3.1
+version: 3.2
 license: MIT
-description: A pipeline that properly integrates OpenWebUI sources and tool results with Letta
+description: A pipeline that properly integrates OpenWebUI information with Letta and returns Letta's responses
 requirements: pydantic, aiohttp, letta
 """
 
@@ -29,56 +29,13 @@ class Pipeline:
         print(f"[STARTUP] - base_url: {self.valves.base_url}")
         print(f"[STARTUP] - agent_id: {self.valves.agent_id}")
 
-    def get_response_message(self, agent_id: str, after_time) -> Union[str, None]:
-        """Get response message after specified time"""
-        try:
-            max_attempts = 5
-            attempt = 0
-            
-            while attempt < max_attempts:
-                messages = self.client.get_messages(agent_id=agent_id, limit=10)
-                
-                for msg in reversed(messages):
-                    msg_time = msg.created_at.timestamp() if hasattr(msg, 'created_at') else 0
-                    
-                    if msg_time > after_time and msg.role == "assistant":
-                        if hasattr(msg, 'text'):
-                            return msg.text
-                        elif hasattr(msg, 'message'):
-                            return msg.message
-                
-                attempt += 1
-                if attempt < max_attempts:
-                    time.sleep(1)
-            
-            return None
-        except Exception as e:
-            print(f"[ERROR] Error getting response message: {str(e)}")
-            return None
-
-    def format_source_content(self, source: Dict[str, Any], query_context: str) -> str:
-        """Format source content into a clear message with query context"""
+    def format_source_content(self, source: Dict[str, Any]) -> str:
+        """Format source content into a clear message"""
         try:
             formatted_msg = []
             
-            # Add query context
-            formatted_msg.append(f"Context for: {query_context}")
-            
-            # Add source type and name if available
-            if 'source' in source:
-                src_info = source['source']
-                if 'type' in src_info:
-                    formatted_msg.append(f"Source Type: {src_info['type']}")
-                if 'name' in src_info:
-                    formatted_msg.append(f"Search Query: {src_info['name']}")
-                if 'urls' in src_info:
-                    formatted_msg.append("Sources:")
-                    for url in src_info['urls']:
-                        formatted_msg.append(f"- {url}")
-
             # Add document content if available
             if 'document' in source:
-                formatted_msg.append("\nInformation:")
                 if isinstance(source['document'], list):
                     for doc in source['document']:
                         # Clean up the document text
@@ -94,14 +51,47 @@ class Pipeline:
             if 'metadata' in source:
                 for meta in source['metadata']:
                     if 'title' in meta and 'description' in meta:
-                        formatted_msg.append(f"\nSource Details:")
-                        formatted_msg.append(f"Title: {meta['title']}")
-                        formatted_msg.append(f"Description: {meta['description']}")
+                        formatted_msg.append(f"\nSource: {meta['title']}")
+                        formatted_msg.append(f"{meta['description']}")
 
             return "\n".join(formatted_msg)
         except Exception as e:
             print(f"[WARNING] Error formatting source content: {str(e)}")
             return str(source)
+
+    def get_response_message(self, agent_id: str, after_time) -> Union[str, None]:
+        """Get response message after specified time"""
+        try:
+            max_attempts = 5
+            attempt = 0
+            
+            while attempt < max_attempts:
+                messages = self.client.get_messages(agent_id=agent_id, limit=10)
+                
+                for msg in reversed(messages):
+                    msg_time = msg.created_at.timestamp() if hasattr(msg, 'created_at') else 0
+                    
+                    if msg_time > after_time and msg.role == "assistant":
+                        # Look for send_message tool call
+                        if hasattr(msg, 'tool_calls'):
+                            for tool_call in msg.tool_calls:
+                                if (hasattr(tool_call, 'function') and 
+                                    tool_call.function.name == 'send_message'):
+                                    try:
+                                        args = json.loads(tool_call.function.arguments)
+                                        if 'message' in args:
+                                            return args['message']
+                                    except:
+                                        continue
+                
+                attempt += 1
+                if attempt < max_attempts:
+                    time.sleep(1)
+            
+            return None
+        except Exception as e:
+            print(f"[ERROR] Error getting response message: {str(e)}")
+            return None
 
     def stream_response(self, response: str) -> Generator[str, None, None]:
         """Stream a response one character at a time"""
@@ -125,46 +115,15 @@ class Pipeline:
             # Process messages to extract sources and tool results
             context_messages = []
             
-            # First, send the user's query as context
-            context_messages.append(f"User Query: {user_message}")
-            
             for msg in messages:
-                # Handle system messages
-                if msg.get('role') == 'system':
-                    context = msg.get('content', '')
-                    if context:
-                        context_messages.append(f"System Context: {context}")
-                
                 # Handle assistant messages with sources
-                elif msg.get('role') == 'assistant':
-                    if 'sources' in msg:
-                        for source in msg['sources']:
-                            source_content = self.format_source_content(source, user_message)
-                            if source_content:
-                                context_messages.append(source_content)
-                    
-                    # Handle tool calls if present
-                    if 'tool_calls' in msg:
-                        for tool_call in msg['tool_calls']:
-                            if 'function' in tool_call:
-                                tool_id = tool_call.get('id')
-                                tool_name = tool_call['function'].get('name', 'unknown_tool')
-                                
-                                # Get tool result if available
-                                if tool_id and 'tool_results' in body and tool_id in body['tool_results']:
-                                    result = body['tool_results'][tool_id]
-                                    tool_msg = f"Tool '{tool_name}' result:\n"
-                                    if isinstance(result, str):
-                                        try:
-                                            data = json.loads(result)
-                                            tool_msg += json.dumps(data, indent=2)
-                                        except json.JSONDecodeError:
-                                            tool_msg += result
-                                    else:
-                                        tool_msg += json.dumps(result, indent=2)
-                                    context_messages.append(tool_msg)
+                if msg.get('role') == 'assistant' and 'sources' in msg:
+                    for source in msg['sources']:
+                        source_content = self.format_source_content(source)
+                        if source_content:
+                            context_messages.append(source_content)
 
-            # Send all context to Letta
+            # Send context to Letta if available
             if context_messages:
                 context_text = "\n\n".join(context_messages)
                 print(f"[DEBUG] Sending context to Letta:\n{context_text}")
@@ -177,14 +136,14 @@ class Pipeline:
             # Record time before sending user message
             request_time = time.time()
             
-            # Send user message to agent
+            # Send user message to Letta
             self.client.send_message(
                 agent_id=self.valves.agent_id,
                 message=user_message,
                 role="user"
             )
             
-            # Get response after our request time
+            # Get Letta's response (from send_message tool call)
             response_text = self.get_response_message(self.valves.agent_id, request_time)
             
             if response_text:
@@ -229,23 +188,18 @@ class Pipeline:
 if __name__ == "__main__":
     pipeline = Pipeline()
     
-    # Example with sources and tool results
+    # Example with sources
     test_body = {
         "messages": [
             {
                 "role": "assistant",
                 "sources": [
                     {
-                        "source": {
-                            "type": "web_search_results",
-                            "name": "current president united states",
-                            "urls": ["https://www.whitehouse.gov"]
-                        },
-                        "document": ["Joe Biden is the current president"],
+                        "document": ["Joe Biden is the current president of the United States"],
                         "metadata": [
                             {
-                                "title": "The White House",
-                                "description": "Official website of the White House"
+                                "title": "White House Official Website",
+                                "description": "Current administration information"
                             }
                         ]
                     }
