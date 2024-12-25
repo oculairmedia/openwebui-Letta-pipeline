@@ -1,0 +1,85 @@
+# Letta Integration Instructions
+
+## Overview
+Letta is an agent framework that expects specific message formats and configurations. This document outlines key findings about integrating with Letta.
+
+## Agent Types
+Letta supports several agent types:
+- memgpt_agent
+- split_thread_agent
+- o1_agent
+- offline_memory_agent
+- chat_only_agent (recommended for simple integrations)
+
+## Message Format
+### System Messages
+System messages must follow this XML format:
+```xml
+Use the following context as your learned knowledge, inside <context></context> XML tags.
+<context>
+<source>
+<source_id>URL_OR_SOURCE_ID</source_id>
+<source_context>ACTUAL_CONTENT</source_context>
+</source>
+</context>
+```
+
+### Tool Results
+When sending tool results to Letta:
+1. Tool results should be wrapped in the XML context format
+2. Each source should have a source_id and source_context
+3. Multiple sources can be included in one context block
+
+Example:
+```xml
+Use the following context as your learned knowledge, inside <context></context> XML tags.
+<context>
+<source>
+<source_id>https://example.com/tool1</source_id>
+<source_context>Tool 1 result content...</source_context>
+</source>
+<source>
+<source_id>https://example.com/tool2</source_id>
+<source_context>Tool 2 result content...</source_context>
+</source>
+</context>
+```
+
+## Agent Configuration
+When creating a Letta agent, these fields are required:
+- id: Unique identifier (UUID)
+- name: Agent name
+- system: System prompt
+- agent_type: One of the supported agent types
+- llm_config: LLM configuration
+  - model
+  - temperature
+  - max_tokens
+- embedding_config: Embedding model configuration
+  - model
+- memory: Memory configuration
+  - type
+  - max_messages
+- tools: List of available tools
+- sources: List of available sources
+- tags: List of tags
+
+## Message Flow
+1. Send system message with context (XML format)
+2. Send user message
+3. Get response from send_message tool call
+4. Response will be in the tool_calls field with function name "send_message"
+
+## Common Issues
+1. Missing required fields in AgentState
+2. Incorrect XML format in system messages
+3. Not waiting for send_message tool call in responses
+4. Not handling tool results in proper XML format
+
+## Best Practices
+1. Use chat_only_agent for simple integrations
+2. Always wrap context in proper XML tags
+3. Include source_id for all tool results
+4. Handle streaming responses properly
+5. Check for tool_calls in responses
+6. Format all system messages consistently
