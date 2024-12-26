@@ -11,49 +11,44 @@ import json
 import time
 import uuid
 
-def test_letta_connection(base_url="http://192.168.50.90:8283"):
+def test_letta_connection(base_url="http://192.168.50.90:8283", agent_id="agent-ca9c4ba8-554f-4e48-bef4-784822a909c4"):
     print(f"\n=== Testing Letta Connection ===")
     try:
         # Create client
         print(f"Creating client with base_url: {base_url}")
         client = create_client(base_url=base_url)
         
-        # Create agent
-        print("\nCreating test agent...")
-        agent_state = AgentState(
-            id=str(uuid.uuid4()),
-            name="test_agent",
-            system="You are a helpful assistant.",
-            agent_type=AgentType.chat_only_agent,
-            llm_config=LLMConfig(
-                model="gpt-3.5-turbo",
-                temperature=0.7,
-                max_tokens=1000
-            ),
-            embedding_config=EmbeddingConfig(
-                model="text-embedding-ada-002"
-            ),
-            memory=Memory(
-                type="default",
-                max_messages=100
-            ),
-            tools=[],
-            sources=[],
-            tags=[]
-        )
-        agent = client.create_agent(agent_state)
-        print(f"Agent created with ID: {agent.id}")
+        # First try to get agent info
+        print("\nTrying to get agent info...")
+        try:
+            agent_info = client.get_agent(agent_id)
+            print(f"Agent info: {agent_info}")
+        except Exception as e:
+            print(f"Error getting agent info: {str(e)}")
+        
+        # Try to list available agents
+        print("\nTrying to list available agents...")
+        try:
+            agents = client.list_agents()
+            print(f"Available agents: {agents}")
+        except Exception as e:
+            print(f"Error listing agents: {str(e)}")
         
         # Test connection by sending a simple message
         print("\nTesting connection by sending a test message...")
         response = client.send_message(
-            agent_id=agent.id,
+            agent_id=agent_id,
             message="Test connection",
             role="system"
         )
         print(f"Response received: {response}")
         
-        return client, agent
+        # Create a simple agent object to return
+        class Agent:
+            def __init__(self, id):
+                self.id = id
+        
+        return client, Agent(agent_id)
     except Exception as e:
         print(f"Error connecting to Letta: {str(e)}")
         return None, None
@@ -102,15 +97,30 @@ def test_message_flow(client, agent):
             
             for msg in messages:
                 print(f"\nMessage:")
-                print(f"Role: {msg.role}")
+                print(f"Role: {msg.role if hasattr(msg, 'role') else 'unknown'}")
+                
+                # Try different message content attributes
+                content = None
                 if hasattr(msg, 'text'):
-                    print(f"Text: {msg.text}")
-                if hasattr(msg, 'tool_calls'):
+                    content = msg.text
+                elif hasattr(msg, 'message'):
+                    content = msg.message
+                elif hasattr(msg, 'content'):
+                    content = msg.content
+                
+                if content:
+                    print(f"Content: {content}")
+                
+                # Handle tool calls if present
+                if hasattr(msg, 'tool_calls') and msg.tool_calls:
                     print("Tool Calls:")
-                    for tool_call in msg.tool_calls:
-                        if hasattr(tool_call, 'function'):
-                            print(f"- Function: {tool_call.function.name}")
-                            print(f"  Arguments: {tool_call.function.arguments}")
+                    try:
+                        for tool_call in msg.tool_calls:
+                            if hasattr(tool_call, 'function'):
+                                print(f"- Function: {tool_call.function.name}")
+                                print(f"  Arguments: {tool_call.function.arguments}")
+                    except TypeError:
+                        print(f"Tool calls data: {msg.tool_calls}")
             
             attempt += 1
             if attempt < max_attempts:
