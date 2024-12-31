@@ -8,8 +8,8 @@ description: A pipeline for processing messages through Letta chat API following
 requirements: pydantic, aiohttp, letta
 """
 
-from typing import List, Union, Generator, Iterator
-from pydantic import BaseModel
+from typing import List, Union, Generator, Iterator, Optional
+from pydantic import BaseModel, Field
 import os
 import json
 import time
@@ -19,8 +19,8 @@ class Pipeline:
     class Valves(BaseModel):
         base_url: str = os.getenv('LETTA_BASE_URL', 'http://192.168.50.90:8283')
         agent_id: str = os.getenv('LETTA_AGENT_ID', 'agent-a3899314-bbb3-4798-b3f4-241923314b8e')
-        assistant_message_tool_name: str = None
-        assistant_message_tool_kwarg: str = None
+        assistant_message_tool_name: Optional[str] = Field(default=None)
+        assistant_message_tool_kwarg: Optional[str] = Field(default=None)
 
     def __init__(self):
         self.name = "Letta Chat"
@@ -97,14 +97,21 @@ class Pipeline:
             # Record time before sending message
             request_time = time.time()
             
+            # Prepare message parameters
+            message_params = {
+                "agent_id": self.valves.agent_id,
+                "message": user_message,
+                "role": "user"
+            }
+            
+            # Add optional tool parameters if set
+            if self.valves.assistant_message_tool_name is not None:
+                message_params["assistant_message_tool_name"] = self.valves.assistant_message_tool_name
+            if self.valves.assistant_message_tool_kwarg is not None:
+                message_params["assistant_message_tool_kwarg"] = self.valves.assistant_message_tool_kwarg
+            
             # Send message to agent
-            response = self.client.send_message(
-                agent_id=self.valves.agent_id,
-                message=user_message,
-                role="user",
-                assistant_message_tool_name=self.valves.assistant_message_tool_name,
-                assistant_message_tool_kwarg=self.valves.assistant_message_tool_kwarg
-            )
+            response = self.client.send_message(**message_params)
             
             # Get response after our request time
             response_text = self.get_response_message(self.valves.agent_id, request_time)
