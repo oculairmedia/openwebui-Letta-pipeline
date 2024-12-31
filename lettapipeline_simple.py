@@ -56,7 +56,8 @@ class Pipeline:
                 ),
                 memory=Memory(
                     type="default",
-                    max_messages=100
+                    max_messages=100,
+                    blocks=[]
                 ),
                 tools=[],
                 sources=[],
