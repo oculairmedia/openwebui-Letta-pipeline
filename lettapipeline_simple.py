@@ -45,19 +45,19 @@ class Pipeline:
                     model="gpt-3.5-turbo",
                     model_endpoint_type="openai",
                     context_window=4096,
-                    temperature=0.7,
-                    max_tokens=1000
+                    model_endpoint="https://api.openai.com/v1"
                 ),
                 embedding_config=EmbeddingConfig(
                     embedding_endpoint_type="openai",
                     embedding_model="text-embedding-ada-002",
                     embedding_dim=1536,
-                    embedding_chunk_size=1000
+                    embedding_endpoint="https://api.openai.com/v1"
                 ),
                 memory=Memory(
-                    type="default",
-                    max_messages=100,
-                    blocks=[]
+                    blocks=[{
+                        "value": "Initial memory block",
+                        "label": "memory"
+                    }]
                 ),
                 tools=[],
                 sources=[],
