@@ -49,7 +49,10 @@ class Pipeline:
                     max_tokens=1000
                 ),
                 embedding_config=EmbeddingConfig(
-                    model="text-embedding-ada-002"
+                    embedding_endpoint_type="openai",
+                    embedding_model="text-embedding-ada-002",
+                    embedding_dim=1536,
+                    embedding_chunk_size=1000
                 ),
                 memory=Memory(
                     type="default",
