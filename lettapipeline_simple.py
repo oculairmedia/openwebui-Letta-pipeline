@@ -35,6 +35,7 @@ class Pipeline:
             from letta.schemas.memory import Memory
             from letta.schemas.llm_config import LLMConfig
             from letta.schemas.embedding_config import EmbeddingConfig
+            from letta.schemas.block import Block
             
             agent_state = AgentState(
                 id=self.valves.agent_id,
