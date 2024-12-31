@@ -62,7 +62,16 @@ class Pipeline:
                     )]
                 ),
                 tools=[],
-                sources=[],
+                sources=[Source(
+                    id="source-12345678",
+                    name="test_source",
+                    embedding_config=EmbeddingConfig(
+                        embedding_endpoint_type="openai",
+                        embedding_model="text-embedding-ada-002",
+                        embedding_dim=1536,
+                        embedding_endpoint="https://api.openai.com/v1"
+                    )
+                )],
                 tags=[]
             )
             agent = self.client.create_agent(agent_state)
