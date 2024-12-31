@@ -54,10 +54,11 @@ class Pipeline:
                     embedding_endpoint="https://api.openai.com/v1"
                 ),
                 memory=Memory(
-                    blocks=[{
-                        "value": "Initial memory block",
-                        "label": "memory"
-                    }]
+                    blocks=[Block(
+                        value="Initial memory block",
+                        label="memory",
+                        id="block-12345678"
+                    )]
                 ),
                 tools=[],
                 sources=[],
