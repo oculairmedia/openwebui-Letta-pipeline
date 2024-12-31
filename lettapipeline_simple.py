@@ -38,6 +38,10 @@ class Pipeline:
             from letta.schemas.block import Block
             from letta.schemas.source import Source
             
+            # Create base tools
+            base_tools = self.client.upsert_base_tools()
+            
+            # Create agent state
             agent_state = AgentState(
                 id=self.valves.agent_id,
                 name="test_agent",
@@ -62,7 +66,7 @@ class Pipeline:
                         id="block-12345678"
                     )]
                 ),
-                tools=[],
+                tools=base_tools,
                 sources=[Source(
                     id="source-12345678",
                     name="test_source",
