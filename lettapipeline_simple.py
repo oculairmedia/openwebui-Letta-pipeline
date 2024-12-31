@@ -28,6 +28,39 @@ class Pipeline:
         print(f"[STARTUP] Configuration:")
         print(f"[STARTUP] - base_url: {self.valves.base_url}")
         print(f"[STARTUP] - agent_id: {self.valves.agent_id}")
+        
+        # Create agent if it doesn't exist
+        try:
+            from letta.schemas.agent import AgentState, AgentType
+            from letta.schemas.memory import Memory
+            from letta.schemas.llm_config import LLMConfig
+            from letta.schemas.embedding_config import EmbeddingConfig
+            
+            agent_state = AgentState(
+                id=self.valves.agent_id,
+                name="test_agent",
+                system="You are a helpful assistant.",
+                agent_type=AgentType.chat_only_agent,
+                llm_config=LLMConfig(
+                    model="gpt-3.5-turbo",
+                    temperature=0.7,
+                    max_tokens=1000
+                ),
+                embedding_config=EmbeddingConfig(
+                    model="text-embedding-ada-002"
+                ),
+                memory=Memory(
+                    type="default",
+                    max_messages=100
+                ),
+                tools=[],
+                sources=[],
+                tags=[]
+            )
+            agent = self.client.create_agent(agent_state)
+            print(f"[STARTUP] Created agent with ID: {agent.id}")
+        except Exception as e:
+            print(f"[ERROR] Failed to create agent: {str(e)}")
 
     def get_response_message(self, agent_id: str, after_time) -> Union[str, None]:
         """Get response message after specified time"""
