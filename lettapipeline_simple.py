@@ -43,6 +43,8 @@ class Pipeline:
                 agent_type=AgentType.chat_only_agent,
                 llm_config=LLMConfig(
                     model="gpt-3.5-turbo",
+                    model_endpoint_type="openai",
+                    context_window=4096,
                     temperature=0.7,
                     max_tokens=1000
                 ),
