@@ -38,8 +38,13 @@ class PipelineTester:
                 body={"stream": True}
             )
             
+            if isinstance(response, str):
+                # Error message
+                print(response)
+                return False
+            
             chunks = []
-            async for chunk in self._async_generator(response):
+            for chunk in response:
                 chunks.append(chunk)
                 print(chunk, end='', flush=True)
             
@@ -65,7 +70,9 @@ class PipelineTester:
                 }
             )
             print(f"Response: {response}")
-            return "tool" in response.lower()
+            if isinstance(response, str):
+                return "tool" in response.lower()
+            return False
         except Exception as e:
             print(f"Error in tool call test: {str(e)}")
             return False
@@ -89,7 +96,9 @@ class PipelineTester:
             self.pipeline.valves.agent_id = old_agent_id
             
             print(f"Response: {response}")
-            return "error" in response.lower()
+            if isinstance(response, str):
+                return "error" in response.lower() or "failed" in response.lower()
+            return False
         except Exception as e:
             print(f"Error in error handling test: {str(e)}")
             return False
@@ -111,7 +120,11 @@ class PipelineTester:
                 body={"stream": False}
             )
             print(f"Response: {response}")
-            return isinstance(response, str) and len(response) > 0
+            if isinstance(response, str):
+                if "error" in response.lower() or "failed" in response.lower():
+                    return False
+                return len(response) > 0
+            return False
         except Exception as e:
             print(f"Error in message history test: {str(e)}")
             return False

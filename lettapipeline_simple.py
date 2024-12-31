@@ -96,20 +96,25 @@ class Pipeline:
             request_time = time.time()
             
             # Send message to agent
-            response = self.client.send_message(
-                agent_id=self.valves.agent_id,
-                message=user_message,
-                role="user"
-            )
+            try:
+                response = self.client.send_message(
+                    agent_id=self.valves.agent_id,
+                    message=user_message,
+                    role="user"
+                )
+            except Exception as e:
+                error_msg = f"Failed to send message: {str(e)}"
+                print(f"[ERROR] {error_msg}")
+                return error_msg
             
             # Get response after our request time
             response_text = self.get_response_message(self.valves.agent_id, request_time)
             
             if response_text:
                 if payload.get("stream", False):
-                    # For streaming, yield each character
-                    for char in response_text:
-                        yield char
+                    # For streaming, convert to list first
+                    chars = list(response_text)
+                    return chars
                 else:
                     return response_text
             else:
