@@ -5,7 +5,7 @@ date: 2024-01-17
 version: 1.0
 license: MIT
 description: A pipeline for processing messages through Letta chat API
-requirements: pydantic, aiohttp, letta
+requirements: pydantic, urllib3
 """
 
 from typing import List, Union, Generator, Iterator
@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict
 import json
 import time
 import os
+from datetime import datetime
 import urllib3
 from urllib3.exceptions import InsecureRequestWarning
 
@@ -36,119 +37,18 @@ class Pipeline:
     def __init__(self):
         self.name = "Letta Chat"
         self.valves = self.Valves()
-        
-        # Disable SSL verification warnings since we're using a self-signed cert
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        
-        # Patch the session to disable SSL verification
-        import requests
-        requests.packages.urllib3.disable_warnings()
-        session = requests.Session()
-        session.verify = False
-        
-        self.client = create_client(base_url=self.valves.base_url)
         print(f"[STARTUP] Starting {self.name}")
         print(f"[STARTUP] Configuration:")
         print(f"[STARTUP] - base_url: {self.valves.base_url}")
         print(f"[STARTUP] - agent_id: {self.valves.agent_id}")
 
-    def get_response_message(self, agent_id: str, after_time) -> Union[str, None]:
-        """Get response message after specified time"""
-        try:
-            max_attempts = 5
-            attempt = 0
-            
-            while attempt < max_attempts:
-                messages = self.client.get_messages(agent_id=agent_id, limit=10)
-                if not messages:
-                    print("[DEBUG] No messages received")
-                    attempt += 1
-                    if attempt < max_attempts:
-                        time.sleep(1)
-                    continue
-
-                print(f"[DEBUG] Got {len(messages)} messages")
-                
-                # Convert messages to list if it's not already
-                if not isinstance(messages, list):
-                    messages = [messages]
-                
-                for msg in reversed(messages):
-                    # Debug message attributes
-                    print(f"[DEBUG] Message attributes: {dir(msg)}")
-                    
-                    # Get message time safely
-                    msg_time = getattr(msg, 'created_at', None)
-                    if msg_time and hasattr(msg_time, 'timestamp'):
-                        msg_time = msg_time.timestamp()
-                    else:
-                        msg_time = 0
-                    
-                    # Get message role safely
-                    msg_role = getattr(msg, 'role', None)
-                    
-                    if msg_time > after_time and msg_role == "assistant":
-                        # Try to get content from various attributes
-                        if hasattr(msg, 'content'):
-                            return msg.content
-                        elif hasattr(msg, 'text'):
-                            return msg.text
-                        elif hasattr(msg, 'message'):
-                            return msg.message
-                        
-                        # Check for tool calls
-                        tool_calls = getattr(msg, 'tool_calls', None)
-                        if tool_calls:
-                            for tool_call in tool_calls:
-                                if hasattr(tool_call, 'function'):
-                                    func = tool_call.function
-                                    if getattr(func, 'name', '') == 'send_message':
-                                        try:
-                                            args = json.loads(func.arguments)
-                                            if 'message' in args:
-                                                return args['message']
-                                        except:
-                                            continue
-                
-                attempt += 1
-                if attempt < max_attempts:
-                    time.sleep(1)
-            
-            return None
-        except Exception as e:
-            print(f"[ERROR] Error getting response message: {str(e)}")
-            return None
-
     async def inlet(self, body: dict, user: dict) -> dict:
         """Process incoming request before sending to agent"""
-        print(f"[DEBUG] inlet - body: {body}")
         return body
 
     async def outlet(self, body: dict, user: dict) -> dict:
         """Process response after receiving from agent"""
-        print(f"[DEBUG] outlet - body: {body}")
         return body
-
-    async def _send_message(self, session, user_message: str):
-        """Send a message to the agent using aiohttp"""
-        data = {
-            "message": user_message,
-            "role": "user"
-        }
-        async with session.post(
-            f"{self.valves.base_url}/v1/agents/{self.valves.agent_id}/messages",
-            json=data
-        ) as response:
-            return await response.json()
-
-    async def _get_messages(self, session, limit: int = 10):
-        """Get messages from the agent using aiohttp"""
-        async with session.get(
-            f"{self.valves.base_url}/v1/agents/{self.valves.agent_id}/messages",
-            params={"limit": limit}
-        ) as response:
-            return await response.json()
 
     def pipe(
         self, user_message: str, model_id: str, messages: List[dict], body: dict
@@ -187,6 +87,8 @@ class Pipeline:
                     headers={'Content-Type': 'application/json'}
                 )
                 response_data = response.data.decode('utf-8')
+                print(f"[DEBUG] Send response: {response_data}")
+                
                 if response.status != 200:
                     error_msg = f"Failed to send message: {response_data}"
                     print(f"[ERROR] {error_msg}")
@@ -215,6 +117,9 @@ class Pipeline:
                         f"{self.valves.base_url}/v1/agents/{self.valves.agent_id}/messages",
                         fields={'limit': '10'}
                     )
+                    messages_data = messages_response.data.decode('utf-8')
+                    print(f"[DEBUG] Messages response: {messages_data}")
+                    
                     if messages_response.status == 200:
                         messages = json.loads(messages_response.data.decode('utf-8'))
                         if isinstance(messages, list) and messages:
@@ -235,9 +140,6 @@ class Pipeline:
                 return "I apologize, but I couldn't process your message at this time."
             finally:
                 http.clear()
-            
-            # Return response
-            return response_text
 
         except Exception as e:
             error_msg = f"Error communicating with agent: {str(e)}"
@@ -246,28 +148,12 @@ class Pipeline:
 
     async def on_startup(self):
         """Initialize on startup"""
-        print(f"on_startup:{__name__}")
         pass
 
     async def on_shutdown(self):
         """Cleanup on shutdown"""
-        print(f"on_shutdown:{__name__}")
         pass
 
     async def on_valves_updated(self):
         """Handle valve updates"""
-        self.client = create_client(base_url=self.valves.base_url)
-        print(f"[INFO] Updated client with new base_url: {self.valves.base_url}")
-
-# Example usage
-if __name__ == "__main__":
-    pipeline = Pipeline()
-    
-    # Send a test message
-    response = pipeline.pipe(
-        user_message="Hello! How are you?",
-        model_id="default",
-        messages=[],
-        body={}
-    )
-    print(f"Agent response: {response}")
+        pass
