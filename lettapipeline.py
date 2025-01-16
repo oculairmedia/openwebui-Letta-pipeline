@@ -24,7 +24,6 @@ urllib3.disable_warnings(InsecureRequestWarning)
 def create_http():
     return urllib3.PoolManager(
         cert_reqs='CERT_NONE',
-        assert_hostname=False,
         retries=urllib3.Retry(3)
     )
 
