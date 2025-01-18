@@ -6,21 +6,31 @@ version: 1.0
 license: MIT
 description: An asynchronous pipeline for processing messages through Letta chat API
 requirements: pydantic, httpx
+
+This pipeline implements streaming responses compatible with OpenWebUI's
+browser-based streaming expectations. It handles both SSE (Server-Sent Events)
+and WebSocket protocols for real-time communication.
 """
 
-from typing import List, Union, AsyncGenerator, Optional
+from typing import List, Union, AsyncGenerator, Optional, Dict, Any
 from pydantic import BaseModel, ConfigDict
 import json
 import time
 import httpx
 import asyncio
 from datetime import datetime
+from contextlib import asynccontextmanager
 
 
 class LettaError(Exception):
     """Base exception for Letta pipeline errors"""
     pass
 
+
+class StreamEvent(BaseModel):
+    """Model for streaming events"""
+    type: str
+    data: Dict[str, Any]
 
 class Pipeline:
     class Valves(BaseModel):
@@ -35,6 +45,24 @@ class Pipeline:
         print(f"[STARTUP] Configuration:")
         print(f"[STARTUP] - base_url: {self.valves.base_url}")
         print(f"[STARTUP] - agent_id: {self.valves.agent_id}")
+
+    @asynccontextmanager
+    async def get_client(self):
+        """Get an HTTP client with proper configuration"""
+        async with httpx.AsyncClient(
+            verify=False,
+            timeout=httpx.Timeout(30.0, connect=10.0)
+        ) as client:
+            yield client
+
+    async def create_stream_event(
+        self, 
+        event_type: str, 
+        data: Dict[str, Any]
+    ) -> str:
+        """Create a properly formatted stream event"""
+        event = StreamEvent(type=event_type, data=data)
+        return json.dumps(event.model_dump())
 
     async def inlet(self, body: dict, user: dict) -> dict:
         """Process incoming request before sending to agent"""
@@ -66,24 +94,30 @@ class Pipeline:
 
     async def pipe(
         self, user_message: str, model_id: str, messages: List[dict], body: dict
-    ) -> Union[str, AsyncGenerator[str, None]]:
-        """Process messages through the pipeline asynchronously"""
+    ) -> AsyncGenerator[str, None]:
+        """Process messages through the pipeline asynchronously with proper streaming"""
         if body.get("title", False):
-            return self.name
+            yield await self.create_stream_event("chat:title", {"title": self.name})
+            return
+
+        chat_id = body.get("chat_id", "")
+        message_id = body.get("message_id", "")
 
         print(f"[DEBUG] Processing message: {user_message[:100]}...")
         print(f"[DEBUG] Model ID: {model_id}")
-        print(f"[DEBUG] Body: {json.dumps(body, indent=2)}")
+        print(f"[DEBUG] Chat ID: {chat_id}")
+        print(f"[DEBUG] Message ID: {message_id}")
 
-        # Clean up payload
-        payload = {**body}
-        for key in ['user', 'chat_id', 'title']:
-            payload.pop(key, None)
+        async def stream_response():
+            try:
+                # Send initial completion event
+                yield await self.create_stream_event(
+                    "chat:completion",
+                    {"message": "", "done": False}
+                )
 
-        async def message_generator():
-            async with httpx.AsyncClient(verify=False) as client:
-                try:
-                    # Send initial message
+                async with self.get_client() as client:
+                    # Send message to agent
                     data = {
                         "messages": [{"text": user_message, "role": "user"}]
                     }
@@ -92,8 +126,7 @@ class Pipeline:
                     response = await client.post(
                         f"{self.valves.base_url}/v1/agents/{self.valves.agent_id}/messages",
                         json=data,
-                        headers={'Content-Type': 'application/json'},
-                        timeout=30.0
+                        headers={'Content-Type': 'application/json'}
                     )
                     response.raise_for_status()
                     response_data = response.json()
@@ -103,32 +136,46 @@ class Pipeline:
                     content = await self._process_messages(response_data.get('messages', []))
                     if content:
                         print(f"[DEBUG] Found content in initial response: {content[:100]}...")
-                        yield content
+                        yield await self.create_stream_event(
+                            "chat:completion",
+                            {"message": content, "done": True}
+                        )
                         return
 
-                    # Poll for messages until we get a response or timeout
+                    # Poll for messages
                     max_retries = 5
                     retry_count = 0
+                    accumulated_content = []
                     
                     while retry_count < max_retries:
-                        await asyncio.sleep(2)  # Increased wait time
+                        await asyncio.sleep(2)
                         print(f"[DEBUG] Polling attempt {retry_count + 1}/{max_retries}")
                         
                         try:
                             messages_response = await client.get(
                                 f"{self.valves.base_url}/v1/agents/{self.valves.agent_id}/messages",
-                                params={'limit': '10'},
-                                timeout=10.0
+                                params={'limit': '10'}
                             )
                             messages_response.raise_for_status()
                             messages_data = messages_response.json()
-                            print(f"[DEBUG] Messages response: {json.dumps(messages_data, indent=2)}")
 
                             if isinstance(messages_data, list) and messages_data:
-                                content = await self._process_messages(reversed(messages_data))
-                                if content:
-                                    print(f"[DEBUG] Found content in messages: {content[:100]}...")
-                                    yield content
+                                for msg in reversed(messages_data):
+                                    if msg.get('message_type') == 'tool_call_message':
+                                        tool_call = msg.get('tool_call', {})
+                                        content = await self._extract_message_content(tool_call)
+                                        if content and content not in accumulated_content:
+                                            accumulated_content.append(content)
+                                            yield await self.create_stream_event(
+                                                "chat:completion",
+                                                {"message": content, "done": False}
+                                            )
+
+                                if accumulated_content:
+                                    yield await self.create_stream_event(
+                                        "chat:completion",
+                                        {"message": " ".join(accumulated_content), "done": True}
+                                    )
                                     return
 
                             retry_count += 1
@@ -137,30 +184,41 @@ class Pipeline:
                             retry_count += 1
                             continue
 
-                    print("[DEBUG] Max retries reached without finding content")
-                    yield "I apologize, but I couldn't process your message at this time."
+                    # If we reach here, send error response
+                    yield await self.create_stream_event(
+                        "chat:completion",
+                        {
+                            "message": "I apologize, but I couldn't process your message at this time.",
+                            "done": True
+                        }
+                    )
 
-                except httpx.HTTPStatusError as e:
-                    error_msg = f"HTTP error occurred: {str(e)}"
-                    print(f"[ERROR] {error_msg}")
-                    yield f"Failed to communicate with agent: {e.response.status_code}"
-                    
-                except httpx.RequestError as e:
-                    error_msg = f"Request error occurred: {str(e)}"
-                    print(f"[ERROR] {error_msg}")
-                    yield "Failed to connect to agent service"
-                    
-                except json.JSONDecodeError as e:
-                    error_msg = f"JSON decode error: {str(e)}"
-                    print(f"[ERROR] {error_msg}")
-                    yield "Failed to process agent response"
-                    
-                except Exception as e:
-                    error_msg = f"Unexpected error: {str(e)}"
-                    print(f"[ERROR] {error_msg}")
-                    yield "An unexpected error occurred"
+            except httpx.HTTPStatusError as e:
+                yield await self.create_stream_event(
+                    "chat:error",
+                    {"message": f"Failed to communicate with agent: {e.response.status_code}"}
+                )
+                
+            except httpx.RequestError as e:
+                yield await self.create_stream_event(
+                    "chat:error",
+                    {"message": "Failed to connect to agent service"}
+                )
+                
+            except json.JSONDecodeError as e:
+                yield await self.create_stream_event(
+                    "chat:error",
+                    {"message": "Failed to process agent response"}
+                )
+                
+            except Exception as e:
+                yield await self.create_stream_event(
+                    "chat:error",
+                    {"message": f"An unexpected error occurred: {str(e)}"}
+                )
 
-        return message_generator()
+        async for event in stream_response():
+            yield event
 
     async def on_startup(self):
         """Initialize on startup"""
