@@ -8,12 +8,19 @@ description: An asynchronous pipeline for processing messages through Letta chat
 requirements: pydantic, httpx
 """
 
-from typing import List, Union, AsyncGenerator
+from typing import List, Union, AsyncGenerator, Optional
 from pydantic import BaseModel, ConfigDict
 import json
 import time
 import httpx
+import asyncio
 from datetime import datetime
+
+
+class LettaError(Exception):
+    """Base exception for Letta pipeline errors"""
+    pass
+
 
 class Pipeline:
     class Valves(BaseModel):
@@ -24,7 +31,6 @@ class Pipeline:
     def __init__(self):
         self.name = "Async Letta Chat"
         self.valves = self.Valves()
-        self.client = None
         print(f"[STARTUP] Starting {self.name}")
         print(f"[STARTUP] Configuration:")
         print(f"[STARTUP] - base_url: {self.valves.base_url}")
@@ -38,95 +44,93 @@ class Pipeline:
         """Process response after receiving from agent"""
         return body
 
+    async def _extract_message_content(self, tool_call: dict) -> Optional[str]:
+        """Extract message content from tool call"""
+        try:
+            if tool_call.get('name') == 'send_message':
+                args = json.loads(tool_call.get('arguments', '{}'))
+                return args.get('message', '')
+        except json.JSONDecodeError:
+            print("[ERROR] Failed to decode tool call arguments")
+        return None
+
+    async def _process_messages(self, messages: List[dict]) -> Optional[str]:
+        """Process messages to find content"""
+        for msg in messages:
+            if msg.get('message_type') == 'tool_call_message':
+                tool_call = msg.get('tool_call', {})
+                content = await self._extract_message_content(tool_call)
+                if content:
+                    return content
+        return None
+
     async def pipe(
         self, user_message: str, model_id: str, messages: List[dict], body: dict
-    ) -> Union[str, AsyncGenerator]:
+    ) -> str:
         """Process messages through the pipeline asynchronously"""
         if body.get("title", False):
             return self.name
 
-        try:
-            # Clean up payload
-            payload = {**body}
-            for key in ['user', 'chat_id', 'title']:
-                payload.pop(key, None)
+        # Clean up payload
+        payload = {**body}
+        for key in ['user', 'chat_id', 'title']:
+            payload.pop(key, None)
 
-            # Record time before sending message
-            request_time = time.time()
+        async with httpx.AsyncClient(verify=False) as client:
+            try:
+                # Send initial message
+                data = {
+                    "messages": [{"text": user_message, "role": "user"}]
+                }
+                response = await client.post(
+                    f"{self.valves.base_url}/v1/agents/{self.valves.agent_id}/messages",
+                    json=data,
+                    headers={'Content-Type': 'application/json'}
+                )
+                response.raise_for_status()
+                response_data = response.json()
+                
+                # Check initial response
+                content = await self._process_messages(response_data.get('messages', []))
+                if content:
+                    return content
 
-            async with httpx.AsyncClient(verify=False) as client:
-                try:
-                    # Send message
-                    data = {
-                        "messages": [
-                            {
-                                "text": user_message,
-                                "role": "user"
-                            }
-                        ]
-                    }
+                # Wait and try to get response from messages endpoint
+                await asyncio.sleep(1)
+                
+                messages_response = await client.get(
+                    f"{self.valves.base_url}/v1/agents/{self.valves.agent_id}/messages",
+                    params={'limit': '10'}
+                )
+                messages_response.raise_for_status()
+                messages_data = messages_response.json()
 
-                    response = await client.post(
-                        f"{self.valves.base_url}/v1/agents/{self.valves.agent_id}/messages",
-                        json=data,
-                        headers={'Content-Type': 'application/json'}
-                    )
-                    response_data = response.text
-                    print(f"[DEBUG] Send response: {response_data}")
+                if isinstance(messages_data, list) and messages_data:
+                    content = await self._process_messages(reversed(messages_data))
+                    if content:
+                        return content
 
-                    if response.status_code != 200:
-                        error_msg = f"Failed to send message: {response_data}"
-                        print(f"[ERROR] {error_msg}")
-                        return error_msg
+                return "I apologize, but I couldn't process your message at this time."
 
-                    # Try to get response from the initial response
-                    try:
-                        initial_response = response.json()
-                        for msg in initial_response.get('messages', []):
-                            if msg.get('message_type') == 'tool_call_message':
-                                tool_call = msg.get('tool_call', {})
-                                if tool_call.get('name') == 'send_message':
-                                    args = json.loads(tool_call.get('arguments', '{}'))
-                                    content = args.get('message', '')
-                                    if content:
-                                        return content
-                    except:
-                        pass
-
-                    # If no response in initial message, wait and try again
-                    await asyncio.sleep(1)
-
-                    try:
-                        messages_response = await client.get(
-                            f"{self.valves.base_url}/v1/agents/{self.valves.agent_id}/messages",
-                            params={'limit': '10'}
-                        )
-                        messages_data = messages_response.text
-                        print(f"[DEBUG] Messages response: {messages_data}")
-
-                        if messages_response.status_code == 200:
-                            messages = messages_response.json()
-                            if isinstance(messages, list) and messages:
-                                for msg in reversed(messages):
-                                    if msg.get('message_type') == 'tool_call_message':
-                                        tool_call = msg.get('tool_call', {})
-                                        if tool_call.get('name') == 'send_message':
-                                            try:
-                                                args = json.loads(tool_call.get('arguments', '{}'))
-                                                content = args.get('message', '')
-                                                if content:
-                                                    return content
-                                            except:
-                                                continue
-                    except Exception as e:
-                        print(f"[ERROR] Error getting messages: {e}")
-
-                    return "I apologize, but I couldn't process your message at this time."
-
-                except Exception as e:
-                    error_msg = f"Error communicating with agent: {str(e)}"
-                    print(f"[ERROR] {error_msg}")
-                    return error_msg
+            except httpx.HTTPStatusError as e:
+                error_msg = f"HTTP error occurred: {str(e)}"
+                print(f"[ERROR] {error_msg}")
+                return f"Failed to communicate with agent: {e.response.status_code}"
+                
+            except httpx.RequestError as e:
+                error_msg = f"Request error occurred: {str(e)}"
+                print(f"[ERROR] {error_msg}")
+                return "Failed to connect to agent service"
+                
+            except json.JSONDecodeError as e:
+                error_msg = f"JSON decode error: {str(e)}"
+                print(f"[ERROR] {error_msg}")
+                return "Failed to process agent response"
+                
+            except Exception as e:
+                error_msg = f"Unexpected error: {str(e)}"
+                print(f"[ERROR] {error_msg}")
+                return "An unexpected error occurred"
 
     async def on_startup(self):
         """Initialize on startup"""
