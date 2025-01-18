@@ -66,71 +66,101 @@ class Pipeline:
 
     async def pipe(
         self, user_message: str, model_id: str, messages: List[dict], body: dict
-    ) -> str:
+    ) -> Union[str, AsyncGenerator[str, None]]:
         """Process messages through the pipeline asynchronously"""
         if body.get("title", False):
             return self.name
+
+        print(f"[DEBUG] Processing message: {user_message[:100]}...")
+        print(f"[DEBUG] Model ID: {model_id}")
+        print(f"[DEBUG] Body: {json.dumps(body, indent=2)}")
 
         # Clean up payload
         payload = {**body}
         for key in ['user', 'chat_id', 'title']:
             payload.pop(key, None)
 
-        async with httpx.AsyncClient(verify=False) as client:
-            try:
-                # Send initial message
-                data = {
-                    "messages": [{"text": user_message, "role": "user"}]
-                }
-                response = await client.post(
-                    f"{self.valves.base_url}/v1/agents/{self.valves.agent_id}/messages",
-                    json=data,
-                    headers={'Content-Type': 'application/json'}
-                )
-                response.raise_for_status()
-                response_data = response.json()
-                
-                # Check initial response
-                content = await self._process_messages(response_data.get('messages', []))
-                if content:
-                    return content
+        async def message_generator():
+            async with httpx.AsyncClient(verify=False) as client:
+                try:
+                    # Send initial message
+                    data = {
+                        "messages": [{"text": user_message, "role": "user"}]
+                    }
+                    print(f"[DEBUG] Sending message to agent: {json.dumps(data, indent=2)}")
+                    
+                    response = await client.post(
+                        f"{self.valves.base_url}/v1/agents/{self.valves.agent_id}/messages",
+                        json=data,
+                        headers={'Content-Type': 'application/json'},
+                        timeout=30.0
+                    )
+                    response.raise_for_status()
+                    response_data = response.json()
+                    print(f"[DEBUG] Initial response: {json.dumps(response_data, indent=2)}")
 
-                # Wait and try to get response from messages endpoint
-                await asyncio.sleep(1)
-                
-                messages_response = await client.get(
-                    f"{self.valves.base_url}/v1/agents/{self.valves.agent_id}/messages",
-                    params={'limit': '10'}
-                )
-                messages_response.raise_for_status()
-                messages_data = messages_response.json()
-
-                if isinstance(messages_data, list) and messages_data:
-                    content = await self._process_messages(reversed(messages_data))
+                    # Check initial response
+                    content = await self._process_messages(response_data.get('messages', []))
                     if content:
-                        return content
+                        print(f"[DEBUG] Found content in initial response: {content[:100]}...")
+                        yield content
+                        return
 
-                return "I apologize, but I couldn't process your message at this time."
+                    # Poll for messages until we get a response or timeout
+                    max_retries = 5
+                    retry_count = 0
+                    
+                    while retry_count < max_retries:
+                        await asyncio.sleep(2)  # Increased wait time
+                        print(f"[DEBUG] Polling attempt {retry_count + 1}/{max_retries}")
+                        
+                        try:
+                            messages_response = await client.get(
+                                f"{self.valves.base_url}/v1/agents/{self.valves.agent_id}/messages",
+                                params={'limit': '10'},
+                                timeout=10.0
+                            )
+                            messages_response.raise_for_status()
+                            messages_data = messages_response.json()
+                            print(f"[DEBUG] Messages response: {json.dumps(messages_data, indent=2)}")
 
-            except httpx.HTTPStatusError as e:
-                error_msg = f"HTTP error occurred: {str(e)}"
-                print(f"[ERROR] {error_msg}")
-                return f"Failed to communicate with agent: {e.response.status_code}"
-                
-            except httpx.RequestError as e:
-                error_msg = f"Request error occurred: {str(e)}"
-                print(f"[ERROR] {error_msg}")
-                return "Failed to connect to agent service"
-                
-            except json.JSONDecodeError as e:
-                error_msg = f"JSON decode error: {str(e)}"
-                print(f"[ERROR] {error_msg}")
-                return "Failed to process agent response"
-                
-            except Exception as e:
-                error_msg = f"Unexpected error: {str(e)}"
-                print(f"[ERROR] {error_msg}")
-                return "An unexpected error occurred"
+                            if isinstance(messages_data, list) and messages_data:
+                                content = await self._process_messages(reversed(messages_data))
+                                if content:
+                                    print(f"[DEBUG] Found content in messages: {content[:100]}...")
+                                    yield content
+                                    return
+
+                            retry_count += 1
+                        except Exception as e:
+                            print(f"[WARNING] Error during polling attempt {retry_count + 1}: {str(e)}")
+                            retry_count += 1
+                            continue
+
+                    print("[DEBUG] Max retries reached without finding content")
+                    yield "I apologize, but I couldn't process your message at this time."
+
+                except httpx.HTTPStatusError as e:
+                    error_msg = f"HTTP error occurred: {str(e)}"
+                    print(f"[ERROR] {error_msg}")
+                    yield f"Failed to communicate with agent: {e.response.status_code}"
+                    
+                except httpx.RequestError as e:
+                    error_msg = f"Request error occurred: {str(e)}"
+                    print(f"[ERROR] {error_msg}")
+                    yield "Failed to connect to agent service"
+                    
+                except json.JSONDecodeError as e:
+                    error_msg = f"JSON decode error: {str(e)}"
+                    print(f"[ERROR] {error_msg}")
+                    yield "Failed to process agent response"
+                    
+                except Exception as e:
+                    error_msg = f"Unexpected error: {str(e)}"
+                    print(f"[ERROR] {error_msg}")
+                    yield "An unexpected error occurred"
+
+        return message_generator()
 
     async def on_startup(self):
         """Initialize on startup"""
