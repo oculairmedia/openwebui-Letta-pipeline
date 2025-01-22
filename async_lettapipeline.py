@@ -35,8 +35,8 @@ class StreamEvent(BaseModel):
 class Pipeline:
     class Valves(BaseModel):
         model_config = ConfigDict(protected_namespaces=())
-        base_url: str = "https://100.93.254.12:8444"
-        agent_id: str = "agent-379f4ef2-c678-4305-b69d-ac15986046c2"
+        base_url: str = "https://letta.oculair.ca"
+        agent_id: str = "agent-586d2bcb-e27a-4d78-b53c-1a29e40ac0ad"
 
     def __init__(self):
         self.name = "Async Letta Chat"
