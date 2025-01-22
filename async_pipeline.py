@@ -84,7 +84,12 @@ class Pipeline:
                     # Transform to OpenWebUI format
                     return json.dumps({
                         'type': 'text',
-                        'content': args.get('message', '')
+                        'content': args.get('message', ''),
+                        'metadata': {
+                            'source': 'letta',
+                            'message_id': message.get('message_id', ''),
+                            'timestamp': int(time.time() * 1000)
+                        }
                     })
             
             # Handle direct assistant messages
@@ -92,13 +97,23 @@ class Pipeline:
                 # Transform to OpenWebUI format
                 return json.dumps({
                     'type': 'text',
-                    'content': message.get('text', '')  # Match Letta's response field
+                    'content': message.get('text', ''),
+                    'metadata': {
+                        'source': 'letta',
+                        'message_id': message.get('message_id', ''),
+                        'timestamp': int(time.time() * 1000)
+                    }
                 })
             
             # Add fallback for other message types
             return json.dumps({
                 'type': 'text',
-                'content': str(message.get('content', ''))
+                'content': str(message.get('content', '')),
+                'metadata': {
+                    'source': 'letta',
+                    'message_id': message.get('message_id', ''),
+                    'timestamp': int(time.time() * 1000)
+                }
             })
 
         except json.JSONDecodeError:
@@ -119,10 +134,19 @@ class Pipeline:
                     'id': msg.get('message_id', ''),
                     'role': 'assistant',
                     'content': content,
-                    'timestamp': int(time.time() * 1000)
+                    'timestamp': int(time.time() * 1000),
+                    'metadata': {
+                        'source': 'letta',
+                        'message_type': msg.get('message_type', 'unknown'),
+                        'agent_id': self.valves.agent_id
+                    }
                 })
         
-        return json.dumps(openwebui_messages) if openwebui_messages else None
+        return json.dumps({
+            'messages': openwebui_messages,
+            'status': 'success',
+            'timestamp': int(time.time() * 1000)
+        }) if openwebui_messages else None
 
     async def pipe(
         self, user_message: str, model_id: str, messages: List[dict], body: dict
