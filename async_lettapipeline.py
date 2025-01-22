@@ -50,9 +50,14 @@ class Pipeline:
     @asynccontextmanager
     async def get_client(self):
         """Get an HTTP client with proper configuration"""
+        headers = {
+            'Content-Type': 'application/json',
+            'X-BARE-PASSWORD': self.valves.lettapass
+        }
         async with httpx.AsyncClient(
             verify=False,
-            timeout=httpx.Timeout(30.0, connect=10.0)
+            timeout=httpx.Timeout(30.0, connect=10.0),
+            headers=headers
         ) as client:
             yield client
 
@@ -136,14 +141,16 @@ class Pipeline:
                     print(f"[DEBUG] Initial response: {json.dumps(response_data, indent=2)}")
 
                     # Check initial response
-                    content = await self._process_messages(response_data.get('messages', []))
-                    if content:
-                        print(f"[DEBUG] Found content in initial response: {content[:100]}...")
-                        yield await self.create_stream_event(
-                            "chat:completion",
-                            {"message": content, "done": True}
-                        )
-                        return
+                    messages = response_data.get('messages', [])
+                    for msg in messages:
+                        content = await self._extract_message_content(msg)
+                        if content:
+                            print(f"[DEBUG] Found content in initial response: {content[:100]}...")
+                            yield await self.create_stream_event(
+                                "chat:completion",
+                                {"message": content, "done": True}
+                            )
+                            return
 
                     # Poll for messages
                     max_retries = 5
@@ -164,15 +171,13 @@ class Pipeline:
 
                             if isinstance(messages_data, list) and messages_data:
                                 for msg in reversed(messages_data):
-                                    if msg.get('message_type') == 'tool_call_message':
-                                        tool_call = msg.get('tool_call', {})
-                                        content = await self._extract_message_content(tool_call)
-                                        if content and content not in accumulated_content:
-                                            accumulated_content.append(content)
-                                            yield await self.create_stream_event(
-                                                "chat:completion",
-                                                {"message": content, "done": False}
-                                            )
+                                    content = await self._extract_message_content(msg)
+                                    if content and content not in accumulated_content:
+                                        accumulated_content.append(content)
+                                        yield await self.create_stream_event(
+                                            "chat:completion",
+                                            {"message": content, "done": False}
+                                        )
 
                                 if accumulated_content:
                                     yield await self.create_stream_event(
