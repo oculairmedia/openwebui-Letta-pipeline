@@ -73,24 +73,26 @@ class Pipeline:
         """Process response after receiving from agent"""
         return body
 
-    async def _extract_message_content(self, tool_call: dict) -> Optional[str]:
-        """Extract message content from tool call"""
+    async def _extract_message_content(self, message: dict) -> Optional[str]:
+        """Extract message content from message object"""
         try:
-            if tool_call.get('name') == 'send_message':
-                args = json.loads(tool_call.get('arguments', '{}'))
-                return args.get('message', '')
+            if message.get('message_type') == 'assistant_message':
+                return message.get('assistant_message', '')
+            elif message.get('message_type') == 'tool_call_message':
+                tool_call = message.get('tool_call', {})
+                if tool_call.get('name') == 'send_message':
+                    args = json.loads(tool_call.get('arguments', '{}'))
+                    return args.get('message', '')
         except json.JSONDecodeError:
-            print("[ERROR] Failed to decode tool call arguments")
+            print("[ERROR] Failed to decode message content")
         return None
 
     async def _process_messages(self, messages: List[dict]) -> Optional[str]:
         """Process messages to find content"""
         for msg in messages:
-            if msg.get('message_type') == 'tool_call_message':
-                tool_call = msg.get('tool_call', {})
-                content = await self._extract_message_content(tool_call)
-                if content:
-                    return content
+            content = await self._extract_message_content(msg)
+            if content:
+                return content
         return None
 
     async def pipe(
