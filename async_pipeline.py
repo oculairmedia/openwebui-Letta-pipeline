@@ -35,8 +35,9 @@ class StreamEvent(BaseModel):
 class Pipeline:
     class Valves(BaseModel):
         model_config = ConfigDict(protected_namespaces=())
-        base_url: str = "https://100.93.254.12:8444"
-        agent_id: str = "agent-379f4ef2-c678-4305-b69d-ac15986046c2"
+        base_url: str = "https://letta.oculair.ca"
+        agent_id: str = "agent-586d2bcb-e27a-4d78-b53c-1a29e40ac0ad"
+        lettapass: str = "password lettaSecurePass123"
 
     def __init__(self):
         self.name = "Async Letta Chat"
@@ -72,25 +73,56 @@ class Pipeline:
         """Process response after receiving from agent"""
         return body
 
-    async def _extract_message_content(self, tool_call: dict) -> Optional[str]:
-        """Extract message content from tool call"""
+    async def _extract_message_content(self, message: dict) -> Optional[str]:
+        """Extract and transform content for OpenWebUI compatibility"""
         try:
-            if tool_call.get('name') == 'send_message':
-                args = json.loads(tool_call.get('arguments', '{}'))
-                return args.get('message', '')
+            # Handle Letta tool call format
+            if message.get('message_type') == 'tool_call_message':
+                tool_call = message.get('tool_call', {})
+                if tool_call.get('name') == 'send_message':
+                    args = json.loads(tool_call.get('arguments', '{}'))
+                    # Transform to OpenWebUI format
+                    return json.dumps({
+                        'type': 'text',
+                        'content': args.get('message', '')
+                    })
+            
+            # Handle direct assistant messages
+            elif message.get('message_type') == 'assistant_message':
+                # Transform to OpenWebUI format
+                return json.dumps({
+                    'type': 'text',
+                    'content': message.get('text', '')  # Match Letta's response field
+                })
+            
+            # Add fallback for other message types
+            return json.dumps({
+                'type': 'text',
+                'content': str(message.get('content', ''))
+            })
+
         except json.JSONDecodeError:
-            print("[ERROR] Failed to decode tool call arguments")
-        return None
+            print("[ERROR] Failed to decode message content")
+            return json.dumps({
+                'type': 'error',
+                'content': 'Failed to parse message'
+            })
 
     async def _process_messages(self, messages: List[dict]) -> Optional[str]:
-        """Process messages to find content"""
+        """Process messages and convert to OpenWebUI format"""
+        openwebui_messages = []
         for msg in messages:
-            if msg.get('message_type') == 'tool_call_message':
-                tool_call = msg.get('tool_call', {})
-                content = await self._extract_message_content(tool_call)
-                if content:
-                    return content
-        return None
+            content = await self._extract_message_content(msg)
+            if content:
+                # Add OpenWebUI required metadata
+                openwebui_messages.append({
+                    'id': msg.get('message_id', ''),
+                    'role': 'assistant',
+                    'content': content,
+                    'timestamp': int(time.time() * 1000)
+                })
+        
+        return json.dumps(openwebui_messages) if openwebui_messages else None
 
     async def pipe(
         self, user_message: str, model_id: str, messages: List[dict], body: dict
