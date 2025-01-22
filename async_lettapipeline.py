@@ -37,6 +37,7 @@ class Pipeline:
         model_config = ConfigDict(protected_namespaces=())
         base_url: str = "https://letta.oculair.ca"
         agent_id: str = "agent-586d2bcb-e27a-4d78-b53c-1a29e40ac0ad"
+        password: str = "password lettaSecurePass123"
 
     def __init__(self):
         self.name = "Async Letta Chat"
