@@ -62,13 +62,13 @@ class Pipeline:
             yield client
 
     async def create_stream_event(
-        self, 
-        event_type: str, 
+        self,
+        event_type: str,
         data: Dict[str, Any]
     ) -> str:
         """Create a properly formatted stream event"""
         event = StreamEvent(type=event_type, data=data)
-        return json.dumps(event.model_dump())
+        return json.dumps(event.dict())
 
     async def inlet(self, body: dict, user: dict) -> dict:
         """Process incoming request before sending to agent"""
