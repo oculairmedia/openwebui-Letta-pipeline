@@ -1,7 +1,25 @@
 import asyncio
 import os
 from dotenv import load_dotenv
-from async_lettapipeline import Pipeline
+from async_pipeline import Pipeline, StreamEvent
+
+# Load environment variables first
+load_dotenv()
+
+# Validate configuration before tests
+def validate_config():
+    """Validate required environment variables"""
+    required_vars = [
+        'LETTA_BASE_URL',
+        'LETTA_AGENT_ID',
+        'LETTA_PASSWORD'
+    ]
+    
+    missing_vars = [var for var in required_vars if var not in os.environ]
+    if missing_vars:
+        raise EnvironmentError(
+            f"Missing required environment variables: {', '.join(missing_vars)}"
+        )
 
 def validate_config():
     """Validate required environment variables"""
@@ -28,7 +46,11 @@ async def test_letta_integration():
     pipeline = Pipeline()
     pipeline.valves.base_url = os.getenv('LETTA_BASE_URL')
     pipeline.valves.agent_id = os.getenv('LETTA_AGENT_ID')
-    pipeline.valves.lettapass = os.getenv('LETTA_PASSWORD')
+    pipeline.valves = Pipeline.Valves(
+        base_url=os.getenv('LETTA_BASE_URL'),
+        agent_id=os.getenv('LETTA_AGENT_ID'),
+        lettapass=os.getenv('LETTA_PASSWORD')
+    )
     
     # Verify valves were set correctly
     print("\nConfiguration:")
