@@ -121,6 +121,7 @@ class Pipe:
     def _handle_streaming(self, url: str, payload: dict, headers: dict) -> Generator:
         """Handle streaming responses"""
         def generator():
+            response = None  # Initialize response variable
             try:
                 print(f"DEBUG: Sending request to URL: {url}")
                 print(f"DEBUG: Headers: {json.dumps(headers, indent=2)}")
@@ -174,7 +175,8 @@ class Pipe:
                 print(f"DEBUG: Streaming error: {str(e)}")
                 yield json.dumps({"type": "chat:error", "data": {"message": f"Error during streaming: {str(e)}"}})
             finally:
-                response.release_conn()
+                if response is not None:  # Only release if response exists
+                    response.release_conn()
 
         return generator()
 

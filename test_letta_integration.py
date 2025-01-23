@@ -2,6 +2,7 @@ import asyncio
 import os
 import json
 import urllib3
+import pytest
 from dotenv import load_dotenv
 from letta_openwebuifunction import Pipe
 
@@ -23,6 +24,7 @@ def validate_config():
             f"Missing required environment variables: {', '.join(missing_vars)}"
         )
 
+@pytest.mark.asyncio
 async def test_letta_integration():
     print("Starting Letta integration test...")
     
