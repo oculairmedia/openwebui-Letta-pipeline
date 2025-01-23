@@ -1,7 +1,9 @@
 import asyncio
 import os
+import json
+import urllib3
 from dotenv import load_dotenv
-from async_pipeline import Pipeline, StreamEvent
+from letta_openwebuifunction import Pipe
 
 # Load environment variables first
 load_dotenv()
@@ -21,62 +23,74 @@ def validate_config():
             f"Missing required environment variables: {', '.join(missing_vars)}"
         )
 
-def validate_config():
-    """Validate required environment variables"""
-    required_vars = [
-        'LETTA_BASE_URL',
-        'LETTA_AGENT_ID',
-        'LETTA_PASSWORD'
-    ]
-    
-    missing_vars = [var for var in required_vars if var not in os.environ]
-    if missing_vars:
-        raise EnvironmentError(
-            f"Missing required environment variables: {', '.join(missing_vars)}"
-        )
-
 async def test_letta_integration():
     print("Starting Letta integration test...")
     
-    # Load environment variables
-    load_dotenv()
+    # Load environment variables from specific path
+    env_path = os.path.join(os.path.dirname(__file__), '.env')
+    load_dotenv(env_path)
     validate_config()
     
-    # Initialize pipeline with environment variables
-    pipeline = Pipeline()
-    pipeline.valves.base_url = os.getenv('LETTA_BASE_URL')
-    pipeline.valves.agent_id = os.getenv('LETTA_AGENT_ID')
-    pipeline.valves = Pipeline.Valves(
-        base_url=os.getenv('LETTA_BASE_URL'),
-        agent_id=os.getenv('LETTA_AGENT_ID'),
-        lettapass=os.getenv('LETTA_PASSWORD')
-    )
+    # Print loaded environment variables
+    print("\nLoaded Environment Variables:")
+    print(f"- LETTA_BASE_URL: {os.getenv('LETTA_BASE_URL')}")
+    print(f"- LETTA_AGENT_ID: {os.getenv('LETTA_AGENT_ID')}")
+    print(f"- LETTA_PASSWORD: {os.getenv('LETTA_PASSWORD')}")
     
-    # Verify valves were set correctly
+    # Set environment variables explicitly
+    os.environ['LETTA_BASE_URL'] = os.getenv('LETTA_BASE_URL')
+    os.environ['LETTA_AGENT_ID'] = os.getenv('LETTA_AGENT_ID')
+    os.environ['LETTA_PASSWORD'] = os.getenv('LETTA_PASSWORD')
+    
+    # Initialize pipeline with explicit configuration
+    pipe = Pipe()
+    pipe.valves.LETTA_BASE_URL = os.getenv('LETTA_BASE_URL')
+    pipe.valves.LETTA_AGENT_ID = os.getenv('LETTA_AGENT_ID')
+    pipe.valves.LETTA_PASSWORD = os.getenv('LETTA_PASSWORD')
+    
+    # Verify configuration
     print("\nConfiguration:")
-    print(f"- Base URL: {pipeline.valves.base_url}")
-    print(f"- Agent ID: {pipeline.valves.agent_id}")
-    print(f"- Password: {'*' * len(pipeline.valves.lettapass)}")
+    print(f"- Base URL: {pipe.valves.LETTA_BASE_URL}")
+    print(f"- Agent ID: {pipe.valves.LETTA_AGENT_ID}")
+    print(f"- Password: {'*' * len(pipe.valves.LETTA_PASSWORD)}")
+    print(f"DEBUG: Actual password: {pipe.valves.LETTA_PASSWORD}")
     
-    # Test message
-    test_message = "Hello Letta, this is a test message"
+    # Test message in Letta format
+    test_message = {
+        "role": "user",
+        "content": "Hello Letta, this is a test message"
+    }
     
     # Create test body
     test_body = {
         "chat_id": "test-chat-123",
-        "message_id": "test-message-456"
+        "message_id": "test-message-456",
+        "messages": [test_message],
+        "stream_steps": True,
+        "stream_tokens": True
+    }
+    
+    # Create test user
+    test_user = {
+        "id": "test-user-001",
+        "name": "Test User"
     }
     
     print("\nTesting message processing...")
     try:
-        # Process message through pipeline
-        async for event in pipeline.pipe(
-            user_message=test_message,
-            model_id="test-model",
-            messages=[],
-            body=test_body
-        ):
-            print(f"Received event: {event}")
+        # Process message through pipe
+        result = pipe.pipe(
+            body=test_body,
+            __user__=test_user,
+            __request__=None
+        )
+        
+        # Process streaming response
+        if hasattr(result, '__iter__'):
+            for chunk in result:
+                print(f"Received chunk: {chunk}")
+        else:
+            print(f"Received response: {result}")
             
         print("\n✅ Message processing test completed successfully")
     except Exception as e:
