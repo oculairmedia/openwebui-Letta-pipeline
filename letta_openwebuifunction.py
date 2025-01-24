@@ -16,12 +16,21 @@ from open_webui.utils.chat import generate_chat_completion
 from open_webui.models.users import Users
 import urllib3
 import base64
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # Disable SSL warnings temporarily
 urllib3.disable_warnings()
 
 
 class Pipe:
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type((urllib3.exceptions.TimeoutError, urllib3.exceptions.HTTPError))
+    )
+    def _send_request(self, method: str, url: str, **kwargs):
+        return self.http.request(method, url, **kwargs)
+
     class Valves(BaseModel):
         LETTA_BASE_URL: str = Field(
             default=os.getenv("LETTA_BASE_URL", "https://letta.oculair.ca"),
@@ -102,8 +111,20 @@ class Pipe:
 
             return self._handle_streaming(url, payload, headers)
 
+        except urllib3.exceptions.MaxRetryError as e:
+            error_message = f"Letta Error: Max retries exceeded. {str(e)}"
+            print(f"DEBUG: {error_message}")
+            print(f"DEBUG: Exception type: {type(e).__name__}")
+            print(f"DEBUG: Exception args: {e.args}")
+            return error_message
+        except urllib3.exceptions.TimeoutError as e:
+            error_message = f"Letta Error: Request timed out. {str(e)}"
+            print(f"DEBUG: {error_message}")
+            print(f"DEBUG: Exception type: {type(e).__name__}")
+            print(f"DEBUG: Exception args: {e.args}")
+            return error_message
         except Exception as e:
-            error_message = f"Letta Error: {str(e)}"
+            error_message = f"Letta Error: Unexpected error occurred. {str(e)}"
             print(f"DEBUG: {error_message}")
             print(f"DEBUG: Exception type: {type(e).__name__}")
             print(f"DEBUG: Exception args: {e.args}")
@@ -130,7 +151,7 @@ class Pipe:
                 print(f"DEBUG: Headers: {json.dumps(headers, indent=2)}")
                 print(f"DEBUG: Payload: {json.dumps(payload, indent=2)}")
 
-                response = self.http.request(
+                response = self._send_request(
                     "POST",
                     url,
                     body=json.dumps(payload),
